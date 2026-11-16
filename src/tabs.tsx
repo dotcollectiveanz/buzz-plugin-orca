@@ -1,7 +1,8 @@
 // The Orca harness's views, in Buzz's own controls: its part of the New agent
 // dialog, its Settings tab (split into identity and runtime parts, with the
 // host's Harness row first), and an Activity tab of each conversation's worker.
-import { AGENTS, MODELS } from "./catalog";
+import { AGENTS } from "./catalog";
+import { agentLabel, effortNote, effortsFor, fit, modelNote, modelsOf } from "./choices";
 import type { AgentCreateProps, AgentSettingsHost, AgentViewProps } from "./buzz";
 import type { Orca, Repo } from "./orca";
 import { React } from "./react";
@@ -59,46 +60,21 @@ const agentChoices = (current: string): Choice[] => [
   ...(AGENTS.some((agent) => agent.id === current) ? [] : [{ value: current, label: current }]),
 ];
 
-const modelsOf = (agent: string) => MODELS[agent] ?? [];
+/** "Claude Code default", as Buzz's Claude agent says "Claude default". */
+const defaultModel = (agent: string) => `${agentLabel(agent)} default`;
 
-function modelChoices(agent: string, current: string): Choice[] {
-  const models = modelsOf(agent);
-  const fallback = models.find((model) => model.isDefault)?.label;
+function modelChoices(agent: string): Choice[] {
   return [
-    { value: DEFAULT, label: fallback ? `Default (${fallback})` : "Agent default" },
-    ...models.map((model) => ({ value: model.id, label: model.label })),
-    ...(current && !models.some((model) => model.id === current)
-      ? [{ value: current, label: current }]
-      : []),
+    { value: DEFAULT, label: defaultModel(agent) },
+    ...modelsOf(agent).map((model) => ({ value: model.id, label: model.label })),
   ];
 }
 
-function effortChoices(agent: string, model: string, current: string): Choice[] {
-  const found = modelsOf(agent).find((item) => item.id === model);
-  const efforts = found?.efforts ?? [];
-  const fallback = efforts.find((effort) => effort.id === found?.defaultEffort)?.label;
+function effortChoices(agent: string, model: string): Choice[] {
   return [
-    { value: DEFAULT, label: fallback ? `Default (${fallback})` : "Default" },
-    ...efforts.map((effort) => ({ value: effort.id, label: effort.label })),
-    ...(current && !efforts.some((effort) => effort.id === current)
-      ? [{ value: current, label: current }]
-      : []),
+    { value: DEFAULT, label: "Default" },
+    ...effortsFor(agent, model).map((effort) => ({ value: effort.id, label: effort.label })),
   ];
-}
-
-/** A change of agent or model drops a model or effort it doesn't offer. */
-export function fit(next: Config): Config {
-  const models = modelsOf(next.agent);
-  const model =
-    next.model && models.length && !models.some((item) => item.id === next.model)
-      ? DEFAULT
-      : next.model;
-  const efforts = models.find((item) => item.id === model)?.efforts ?? [];
-  const effort =
-    !model || (next.effort && !efforts.some((item) => item.id === next.effort))
-      ? DEFAULT
-      : next.effort;
-  return { ...next, model, effort };
 }
 
 type PartProps = Readonly<{
@@ -126,7 +102,8 @@ function IdentityRows({
       ? [{ value: selected, label: value.repo.replace(/^(name|path|id):/, "") }]
       : []),
   ];
-  const models = modelsOf(value.agent);
+  const noModel = modelNote(value.agent);
+  const noEffort = effortNote(value.agent, value.model);
   return (
     <SettingsGroup>
       {typeControl}
@@ -149,17 +126,18 @@ function IdentityRows({
       />
       <ChoiceRow
         title="Model"
-        value={value.model}
-        choices={modelChoices(value.agent, value.model)}
-        disabled={disabled || (!models.length && !value.model)}
+        value={noModel ? DEFAULT : value.model}
+        choices={modelChoices(value.agent)}
+        disabled={disabled || !!noModel}
+        description={noModel}
         onChange={(model) => set({ model })}
       />
       <ChoiceRow
         title="Thinking"
-        value={value.effort}
-        choices={effortChoices(value.agent, value.model, value.effort)}
-        disabled={disabled || !value.model}
-        description={value.model ? undefined : "Choose a model to set its effort."}
+        value={noEffort ? DEFAULT : value.effort}
+        choices={effortChoices(value.agent, value.model)}
+        disabled={disabled || !!noEffort}
+        description={noEffort}
         onChange={(effort) => set({ effort })}
       />
     </SettingsGroup>

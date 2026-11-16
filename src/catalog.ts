@@ -196,6 +196,10 @@ export const AGENTS: readonly CatalogChoice[] = [
   }
 ];
 
+/** The agents Orca's worker-start takes `--model` (and so `--effort`) for;
+ * the others start with the model from their own config. */
+export const MODEL_AGENTS: readonly string[] = ["claude","codex","cursor","antigravity","grok","muse","omp"];
+
 export const MODELS: Readonly<Record<string, readonly CatalogModel[]>> = {
   "claude": [
     {
@@ -443,28 +447,6 @@ export const MODELS: Readonly<Record<string, readonly CatalogModel[]>> = {
       "defaultEffort": "medium"
     }
   ],
-  "gemini": [
-    {
-      "id": "gemini-3-pro-preview",
-      "label": "Gemini 3 Pro Preview",
-      "efforts": []
-    },
-    {
-      "id": "gemini-3-flash-preview",
-      "label": "Gemini 3 Flash Preview",
-      "efforts": []
-    },
-    {
-      "id": "gemini-2.5-pro",
-      "label": "Gemini 2.5 Pro",
-      "efforts": []
-    },
-    {
-      "id": "gemini-2.5-flash",
-      "label": "Gemini 2.5 Flash",
-      "efforts": []
-    }
-  ],
   "cursor": [
     {
       "id": "auto",
@@ -509,163 +491,6 @@ export const MODELS: Readonly<Record<string, readonly CatalogModel[]>> = {
         }
       ],
       "defaultEffort": "high"
-    }
-  ],
-  "codebuddy": [
-    {
-      "id": "default-model",
-      "label": "Default",
-      "efforts": [
-        {
-          "id": "minimal",
-          "label": "Minimal"
-        },
-        {
-          "id": "low",
-          "label": "Low"
-        },
-        {
-          "id": "medium",
-          "label": "Medium"
-        },
-        {
-          "id": "high",
-          "label": "High"
-        },
-        {
-          "id": "xhigh",
-          "label": "Extra high"
-        },
-        {
-          "id": "max",
-          "label": "Max"
-        }
-      ],
-      "defaultEffort": "medium"
-    },
-    {
-      "id": "fast-model",
-      "label": "Fast",
-      "efforts": [
-        {
-          "id": "minimal",
-          "label": "Minimal"
-        },
-        {
-          "id": "low",
-          "label": "Low"
-        },
-        {
-          "id": "medium",
-          "label": "Medium"
-        },
-        {
-          "id": "high",
-          "label": "High"
-        },
-        {
-          "id": "xhigh",
-          "label": "Extra high"
-        },
-        {
-          "id": "max",
-          "label": "Max"
-        }
-      ],
-      "defaultEffort": "medium"
-    },
-    {
-      "id": "balanced-model",
-      "label": "Balanced",
-      "efforts": [
-        {
-          "id": "minimal",
-          "label": "Minimal"
-        },
-        {
-          "id": "low",
-          "label": "Low"
-        },
-        {
-          "id": "medium",
-          "label": "Medium"
-        },
-        {
-          "id": "high",
-          "label": "High"
-        },
-        {
-          "id": "xhigh",
-          "label": "Extra high"
-        },
-        {
-          "id": "max",
-          "label": "Max"
-        }
-      ],
-      "defaultEffort": "medium"
-    },
-    {
-      "id": "primary-model",
-      "label": "Primary",
-      "efforts": [
-        {
-          "id": "minimal",
-          "label": "Minimal"
-        },
-        {
-          "id": "low",
-          "label": "Low"
-        },
-        {
-          "id": "medium",
-          "label": "Medium"
-        },
-        {
-          "id": "high",
-          "label": "High"
-        },
-        {
-          "id": "xhigh",
-          "label": "Extra high"
-        },
-        {
-          "id": "max",
-          "label": "Max"
-        }
-      ],
-      "defaultEffort": "medium"
-    },
-    {
-      "id": "deep-model",
-      "label": "Deep",
-      "efforts": [
-        {
-          "id": "minimal",
-          "label": "Minimal"
-        },
-        {
-          "id": "low",
-          "label": "Low"
-        },
-        {
-          "id": "medium",
-          "label": "Medium"
-        },
-        {
-          "id": "high",
-          "label": "High"
-        },
-        {
-          "id": "xhigh",
-          "label": "Extra high"
-        },
-        {
-          "id": "max",
-          "label": "Max"
-        }
-      ],
-      "defaultEffort": "medium"
     }
   ],
   "grok": [

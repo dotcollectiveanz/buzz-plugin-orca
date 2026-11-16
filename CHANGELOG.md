@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 (16 Nov 2026)
+
+- **Fix: Model and Thinking defaults.** Model's default now reads "Claude Code default" (or the
+  agent's own name) instead of guessing from Orca's catalogue, and Thinking's reads "Default".
+- **Thinking works on Claude's default model.** Orca needs a model to set thinking, so a Claude
+  worker with only a thinking level starts on Claude Code's own `default` model alias.
+- **Only choices Orca can apply.** Models are offered only for the agents Orca can start on a
+  chosen model (Claude, Codex, Cursor, Antigravity, Grok, Muse and OMP, read from Orca's own help);
+  for the others, and where thinking needs a model first, the menu is off and says why.
+
 ## 0.3.0 (16 Nov 2026)
 
 - **Fix: the Harness row is back.** The Settings tab now shows Buzz's Harness control, so an Orca

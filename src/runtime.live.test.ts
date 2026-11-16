@@ -2,7 +2,8 @@
 // in the repo's checkout with a Task that edits nothing, and waits for its
 // report. Nothing reaches Buzz.
 //   ORCA_LIVE=1 ORCA_REPO=<name or path> npx vitest run src/runtime.live.test.ts
-// ORCA_AGENT picks the agent (default claude). Orca is run as Buzz runs it:
+// ORCA_AGENT picks the agent (default claude), ORCA_MODEL and ORCA_EFFORT its
+// model and thinking level. Orca is run as Buzz runs it:
 // the manifest's declared `orca` process (the `sh` locator) with the
 // plugin's arguments after its own, from a PATH with nothing of Orca on it.
 import { spawn as nodeSpawn } from "node:child_process";
@@ -64,6 +65,8 @@ describe.runIf(live)("live Orca", () => {
         {
           repo: process.env.ORCA_REPO ?? "",
           agent: process.env.ORCA_AGENT ?? "claude",
+          model: process.env.ORCA_MODEL ?? "",
+          effort: process.env.ORCA_EFFORT ?? "",
           placement: "main",
           keepOpen: false,
         },

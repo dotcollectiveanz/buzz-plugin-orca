@@ -129,7 +129,7 @@ describe("Orca CLI", () => {
 
 describe("choices", async () => {
   const { AGENTS, MODELS } = await import("./catalog");
-  const { fit } = await import("./tabs");
+  const { fit, launchChoice, effortsFor, modelNote, effortNote } = await import("./choices");
   it("carries Orca's agents and Claude's models", () => {
     expect(AGENTS[0]).toEqual({ id: "claude", label: "Claude Code" });
     expect(AGENTS.map((agent) => agent.id)).toContain("codex");
@@ -141,9 +141,27 @@ describe("choices", async () => {
     const kept = fit(config({ agent: "claude", model: claude.id, effort }));
     expect(kept).toMatchObject({ model: claude.id, effort });
     expect(fit(config({ agent: "codex", model: claude.id, effort }))).toMatchObject({ model: "", effort: "" });
-    expect(fit(config({ agent: "claude", model: "", effort }))).toMatchObject({ effort: "" });
-    // An agent Orca lists no models for keeps what was typed.
-    expect(fit(config({ agent: "goose", model: "x" }))).toMatchObject({ model: "x" });
+    // Claude's default model keeps a thinking level; Codex's needs a model.
+    expect(fit(config({ agent: "claude", model: "", effort: "high" }))).toMatchObject({ model: "", effort: "high" });
+    expect(fit(config({ agent: "codex", model: "", effort: "high" }))).toMatchObject({ effort: "" });
+    // Agents Orca can't give a model to keep none.
+    expect(fit(config({ agent: "gemini", model: "gemini-2.5-pro", effort: "high" }))).toMatchObject({ model: "", effort: "" });
+  });
+  it("starts workers only with what Orca accepts", () => {
+    expect(launchChoice("claude", "", "")).toEqual({});
+    expect(launchChoice("claude", "", "high")).toEqual({ model: "default", effort: "high" });
+    expect(launchChoice("claude", "opus", "")).toEqual({ model: "opus" });
+    expect(launchChoice("claude", "opus", "max")).toEqual({ model: "opus", effort: "max" });
+    expect(launchChoice("codex", "", "high")).toEqual({});
+    expect(launchChoice("gemini", "gemini-2.5-pro", "high")).toEqual({});
+  });
+  it("says why a menu is off", () => {
+    expect(modelNote("claude")).toBeUndefined();
+    expect(modelNote("gemini")).toContain("its own settings");
+    expect(effortNote("claude", "")).toBeUndefined();
+    expect(effortsFor("claude", "").map((effort) => effort.id)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(effortNote("codex", "")).toContain("Choose a model first");
+    expect(effortNote("claude", "haiku")).toContain("no thinking levels");
   });
   it("lists a repository's branches without their ref prefixes", async () => {
     const { spawn, calls } = fakeOrca(() => ({

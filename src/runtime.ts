@@ -13,6 +13,7 @@ import type {
   HarnessConversation,
   HarnessKit,
 } from "./buzz";
+import { launchChoice } from "./choices";
 import { type Message, type Orca, OrcaError, type Repo } from "./orca";
 import { type Config, config, repoSelector } from "./settings";
 import {
@@ -301,8 +302,11 @@ export class OrcaRuntime {
         title,
         agent: settings.agent,
         placement: placementArgs(settings, repo, name),
-        model: delivery.model || settings.model,
-        effort: delivery.effort || settings.effort,
+        ...launchChoice(
+          settings.agent,
+          delivery.model || settings.model,
+          delivery.effort || settings.effort,
+        ),
         keepOpen: settings.keepOpen,
       },
       signal,
