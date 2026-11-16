@@ -30,27 +30,23 @@ Orca's workers run on your computer with your coding agents' own sign-in and per
 ## Requirements
 
 - Buzz desktop 1.0 on macOS.
-- Orca running on the same computer, with the repository added to it.
-- Orca's CLI on the PATH Buzz gets, under the name `orca`. Buzz runs programs by name only. Orca's
-  own link in `/usr/local/bin` may not be readable by you, so link it yourself:
+- Orca installed on the same computer, with at least one repository added to it.
 
-  ```sh
-  mkdir -p ~/.local/bin
-  ln -sf /Applications/Orca.app/Contents/Resources/bin/orca ~/.local/bin/orca
-  ```
-
-  `~/.local/bin` must be on your login shell's PATH. Restart Buzz after you add the link. The
-  agent's Settings tab says when Orca can't be reached.
+Nothing else to set up: no link, no PATH change, no key. If Orca is closed, the plugin opens it.
 
 ## Install
 
-In Buzz: **Settings → Plugins → Manage plugins → Add → Browse** under "Add from folder", pick this
-repository's `plugin/` folder, review the access it asks for, and install. Then create an agent with
-**Orca** as its Harness, choose its repository, add it to a channel and mention it.
+1. In Buzz: **Settings → Plugins → Manage plugins → Add → Browse** under "Add from folder", pick this
+   repository's `plugin/` folder, review the access it asks for, and install.
+2. Create an agent with **Orca** as its Harness. It starts with Orca's first repository chosen;
+   pick another if you want.
+3. Add it to a channel, or open a DM with it, and mention it.
 
 ### Access it asks for
 
-- Run `orca` (Orca's CLI). Nothing else: no network, no files, no MCP.
+- Run Orca's CLI through `sh`. The declared command is a short script that finds `Orca.app` (in
+  `/Applications`, in `~/Applications`, or wherever Spotlight finds it, else an `orca` on your
+  PATH) and runs its CLI with the plugin's arguments. Nothing else: no network, no files, no MCP.
 
 ## How it works
 
@@ -79,7 +75,7 @@ npm install
 npm run build        # src/ → plugin/plugin.js
 npm test
 npm run check        # typecheck, tests, manifest, icon and build freshness
-ORCA_LIVE=1 ORCA_REPO=<repo> npx vitest run src/runtime.live.test.ts   # a real worker in your Orca
+ORCA_LIVE=1 ORCA_REPO=<repo> npx vitest run src/runtime.live.test.ts   # a real worker in your Orca, run as Buzz runs it
 ```
 
 ## Licence

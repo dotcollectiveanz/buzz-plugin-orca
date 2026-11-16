@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (16 Nov 2026)
+
+- **Install and go.** Orca's CLI is found inside `Orca.app` by a short locator the manifest declares,
+  so no link or PATH change is needed. A closed Orca is opened when the plugin needs it.
+- A new agent starts with Orca's first repository chosen.
+- Orca not installed is said plainly in the conversation and in Settings.
+
 ## 0.1.0 (16 Nov 2026)
 
 - First release: the **Orca** harness. A mention starts a supervised Orca worker for the

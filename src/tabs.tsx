@@ -38,9 +38,7 @@ function useOrca(orca: Orca | undefined): Connection {
     const abort = new AbortController();
     (async () => {
       try {
-        const status = await orca.status(abort.signal);
-        if (!status.app?.running || status.runtime?.reachable === false)
-          throw new Error("Orca is not running. Open Orca, then come back here.");
+        // Opens Orca first when it is not running.
         const repos = await orca.repos(abort.signal);
         setConnection({ state: "ready", repos });
       } catch (error) {
@@ -206,14 +204,21 @@ export function createTabs(
     const connection = useOrca(orca);
     const value = config(props.config);
     const ready = !!repoSelector(value.repo);
-    const { onReadyChange } = props;
+    const { onReadyChange, onChange } = props;
     React.useEffect(() => onReadyChange?.(ready), [ready, onReadyChange]);
+    // A new agent starts with Orca's first repository chosen, so creating
+    // one needs no choice at all; the owner can pick another.
+    const first = connection.state === "ready" ? connection.repos[0] : undefined;
+    React.useEffect(() => {
+      if (!value.repo && first)
+        onChange({ ...value, repo: `id:${first.id}` }, { suggested: true });
+    }, [first, value, onChange]);
     return (
       <Fields
         value={value}
         connection={connection}
         disabled={props.disabled}
-        onChange={(next) => props.onChange(next)}
+        onChange={(next) => onChange(next)}
       />
     );
   }

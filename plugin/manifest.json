@@ -5,9 +5,24 @@
   "description": "Buzz agents that hand each request to a coding agent in Orca on this computer, in a workspace of your repository, and post its report back to the thread.",
   "discovery": {
     "category": "agents",
-    "tags": ["code", "coding-agents", "orca", "orchestration"]
+    "tags": [
+      "code",
+      "coding-agents",
+      "orca",
+      "orchestration"
+    ]
   },
   "host": {
-    "processes": [{ "id": "orca", "program": "orca" }]
+    "processes": [
+      {
+        "id": "orca",
+        "program": "sh",
+        "args": [
+          "-c",
+          "o=\"\"; for a in /Applications/Orca.app \"$HOME/Applications/Orca.app\"; do if [ -x \"$a/Contents/Resources/bin/orca\" ]; then o=\"$a/Contents/Resources/bin/orca\"; break; fi; done\nif [ -z \"$o\" ]; then a=$(/usr/bin/mdfind \"kMDItemCFBundleIdentifier == 'com.stablyai.orca'\" 2>/dev/null | /usr/bin/head -n 1); if [ -n \"$a\" ] && [ -x \"$a/Contents/Resources/bin/orca\" ]; then o=\"$a/Contents/Resources/bin/orca\"; fi; fi\nif [ -z \"$o\" ]; then o=$(command -v orca 2>/dev/null); [ -x \"$o\" ] || o=\"\"; fi\nif [ -n \"$o\" ]; then exec \"$o\" \"$@\"; fi\nprintf '%s\\n' '{\"ok\":false,\"error\":{\"code\":\"orca_not_installed\",\"message\":\"Orca is not installed on this computer. Install Orca, open it once, then try again.\"}}'; exit 127",
+          "orca"
+        ]
+      }
+    ]
   }
 }

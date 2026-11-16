@@ -16,8 +16,13 @@ orchestration workers. Read [README.md](README.md) first.
   `buzz-*` classes and design tokens (`var(--space-2)` etc.).
 - **Commit the build.** After changing `src/`, run `npm run build` and commit `plugin/plugin.js`;
   `npm run check` fails if it's stale.
-- **The manifest asks only to run `orca`.** A `manifest.host` change needs the owner's approval on update
-  in Buzz; keep it minimal, and update `scripts/check.mjs` with it.
+- **Install and go.** The plugin must work with nothing set up beyond installing it in Buzz: no links,
+  PATH changes or keys. Buzz runs a declared program by bare name from the PATH, so the manifest declares
+  `sh -c <locator> orca`: the locator finds `Orca.app` and execs its CLI with the plugin's arguments,
+  or answers `orca_not_installed` as Orca's JSON. It must stay under Buzz's 1,024-byte argument limit.
+  A closed Orca is opened (`orca open`) and the call tried once more.
+- **The manifest asks only for that process.** A `manifest.host` change needs the owner's approval on
+  update in Buzz; keep it minimal, and update `scripts/check.mjs` with it.
 - **Orca is reached only through its CLI** (`src/orca.ts`), always with `--json`, and never with an Orca
   terminal's environment (`ENV`): the plugin names its own mailbox terminal with `--from` and
   `--terminal`.
@@ -44,8 +49,9 @@ orchestration workers. Read [README.md](README.md) first.
 
 - `npm test`: unit tests, including loading the built `plugin.js` and rendering every view.
 - `npm run typecheck`.
-- `ORCA_LIVE=1 ORCA_REPO=<repo> npx vitest run src/runtime.live.test.ts`: a real worker in your Orca
-  (`ORCA_AGENT` picks the agent, default `claude`). Nothing reaches Buzz.
+- `ORCA_LIVE=1 ORCA_REPO=<repo> npx vitest run src/runtime.live.test.ts`: a real worker in your Orca,
+  run through the manifest's locator from a PATH with no Orca on it, as Buzz runs it (`ORCA_AGENT`
+  picks the agent, default `claude`). It closes its mailbox terminal. Nothing reaches Buzz.
 - Before a release, also try the change in Buzz itself: install from `plugin/`, create an Orca agent,
   mention it, and check its reply and its Activity tab.
 

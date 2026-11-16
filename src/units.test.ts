@@ -67,6 +67,30 @@ describe("Orca CLI", () => {
     await expect(orca.call(["status"])).rejects.toEqual(new OrcaError("missing", MISSING));
     const { spawn } = fakeOrca(() => ({ raw: "", code: 127 }));
     await expect(new Orca(spawn).call(["status"])).rejects.toMatchObject({ code: "missing" });
+    const located = fakeOrca(() => ({ error: { code: "orca_not_installed", message: "x" } }));
+    await expect(new Orca(located.spawn).call(["status"])).rejects.toEqual(new OrcaError("missing", MISSING));
+  });
+  it("opens Orca once when it is not running, then retries", async () => {
+    let open = false;
+    const { spawn, calls } = fakeOrca((args) => {
+      if (args[0] === "open") {
+        open = true;
+        return { result: {} };
+      }
+      return open
+        ? { result: { repos: [{ id: "r", path: "/p", displayName: "p" }] } }
+        : { error: { code: "runtime_unavailable", message: "Orca is not running" } };
+    });
+    const orca = new Orca(spawn);
+    const [a, b] = await Promise.all([orca.repos(), orca.repos()]);
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+    expect(calls.filter((call) => call.args[0] === "open")).toHaveLength(1);
+  });
+  it("does not retry other errors", async () => {
+    const { spawn, calls } = fakeOrca(() => ({ error: { code: "selector_not_found", message: "no repo" } }));
+    await expect(new Orca(spawn).repo("name:x")).rejects.toMatchObject({ code: "selector_not_found" });
+    expect(calls).toHaveLength(1);
   });
   it("sends a spec on stdin", async () => {
     const { spawn, calls } = fakeOrca(() => ({ result: { dispatchId: "d", runId: "r" } }));

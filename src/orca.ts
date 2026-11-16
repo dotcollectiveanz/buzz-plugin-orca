@@ -23,8 +23,15 @@ export const ENV: Readonly<Record<string, string | null>> = {
 };
 
 export const MISSING =
-  "Buzz can't run `orca`. Link Orca's CLI where Buzz finds it, then restart Buzz:\n" +
-  "`ln -sf /Applications/Orca.app/Contents/Resources/bin/orca ~/.local/bin/orca`";
+  "Orca is not installed on this computer. Install Orca, open it once, then try again.";
+
+/** The manifest's `orca` process is `sh -c <locator> orca`: it runs the CLI
+ * inside Orca.app (in /Applications, ~/Applications, or wherever Spotlight
+ * finds it), else an `orca` on the PATH, else answers `orca_not_installed`.
+ * No link or PATH setup is needed. */
+const NOT_INSTALLED = "orca_not_installed";
+/** Orca's code when its app is not running. */
+const NOT_RUNNING = "runtime_unavailable";
 
 export class OrcaError extends Error {
   constructor(
@@ -83,11 +90,32 @@ export type Started = Readonly<{
 export class Orca {
   constructor(private readonly spawn: Spawn) {}
 
+  private opening: Promise<unknown> | undefined;
+
   /** Runs `orca <args> --json`, writing `input` to stdin, and resolves with
-   * the envelope's `result`. Aborting `signal` kills the command. */
+   * the envelope's `result`. When Orca is not running it opens Orca and
+   * tries once more. Aborting `signal` kills the command. */
   async call<T>(
     args: readonly string[],
     options: Readonly<{ input?: string; signal?: AbortSignal }> = {},
+  ): Promise<T> {
+    try {
+      return await this.once<T>(args, options);
+    } catch (error) {
+      if (!(error instanceof OrcaError) || error.code !== NOT_RUNNING || args[0] === "open")
+        throw error;
+      // One `orca open` at a time, however many calls found Orca closed.
+      this.opening ??= this.once(["open"], { signal: options.signal }).finally(() => {
+        this.opening = undefined;
+      });
+      await this.opening;
+      return this.once<T>(args, options);
+    }
+  }
+
+  private async once<T>(
+    args: readonly string[],
+    options: Readonly<{ input?: string; signal?: AbortSignal }>,
   ): Promise<T> {
     const { input, signal } = options;
     signal?.throwIfAborted();
@@ -129,6 +157,7 @@ export class Orca {
             : `Orca gave no answer (exit ${code ?? "signal"})${detail ? `: ${detail}` : ""}`,
         );
       }
+      if (parsed.error?.code === NOT_INSTALLED) throw new OrcaError("missing", MISSING);
       if (parsed.ok === false || parsed.error)
         throw new OrcaError(
           parsed.error?.code ?? "action_failed",

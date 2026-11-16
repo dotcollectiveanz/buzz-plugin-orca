@@ -17,8 +17,12 @@ check("manifest apiVersion 1", manifest.apiVersion === 1);
 const desc = Buffer.byteLength(manifest.description || "");
 check("manifest description is 1-280 bytes", desc >= 1 && desc <= 280, `${desc} bytes`);
 const host = manifest.host ?? {};
-const processes = (host.processes ?? []).map((p) => `${p.id}=${p.program}${p.args?.length ? ` ${p.args.join(" ")}` : ""}`);
-check("manifest runs only orca", processes.join(",") === "orca=orca", processes.join(","));
+const processes = host.processes ?? [];
+const [orca] = processes;
+check("manifest runs only the orca locator", processes.length === 1 && orca.id === "orca" && orca.program === "sh" && orca.args?.length === 3 && orca.args[0] === "-c" && orca.args[2] === "orca", JSON.stringify(processes));
+const locator = orca?.args?.[1] ?? "";
+check("the locator finds Orca.app and answers when it is missing", /\/Applications\/Orca\.app/.test(locator) && /Contents\/Resources\/bin\/orca/.test(locator) && /orca_not_installed/.test(locator) && /exec "\$o" "\$@"/.test(locator));
+check("the locator fits Buzz's 1024-byte argument limit", Buffer.byteLength(locator) <= 1024, `${Buffer.byteLength(locator)} bytes`);
 check("manifest asks for nothing else", Object.keys(host).join(",") === "processes", Object.keys(host).join(","));
 
 // Buzz rejects the folder if the icon breaks its limits: PNG, at most 1 MiB,
