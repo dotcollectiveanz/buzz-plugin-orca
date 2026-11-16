@@ -1,0 +1,56 @@
+# Instructions for coding agents
+
+This repo is a Buzz desktop plugin (`orca`) that registers an agent harness whose turns run as Orca
+orchestration workers. Read [README.md](README.md) first.
+
+## Hard rules
+
+- **One self-contained module.** Buzz loads `plugin/plugin.js` from a blob URL: no runtime imports, no
+  CSS or asset files, no code splitting. `build.mjs` and `scripts/check.mjs` enforce it.
+- **React comes from Buzz.** Never import `react` or `react-dom` at runtime. JSX compiles to
+  `React.createElement` against `src/react.ts`, set from `ctx.react` in `apply`. Tests may import React.
+- **Types only from Buzz.** `src/buzz.ts` is a type-only copy of the parts of Buzz's plugin API
+  (`@buzz/author`) this plugin uses. Keep it in step with Buzz when the API changes, and never import
+  anything from it at runtime.
+- **No Buzz UI components.** Buzz exposes none to plugins. Build UI in `src/ui.tsx` with Buzz's global
+  `buzz-*` classes and design tokens (`var(--space-2)` etc.).
+- **Commit the build.** After changing `src/`, run `npm run build` and commit `plugin/plugin.js`;
+  `npm run check` fails if it's stale.
+- **The manifest asks only to run `orca`.** A `manifest.host` change needs the owner's approval on update
+  in Buzz; keep it minimal, and update `scripts/check.mjs` with it.
+- **Orca is reached only through its CLI** (`src/orca.ts`), always with `--json`, and never with an Orca
+  terminal's environment (`ENV`): the plugin names its own mailbox terminal with `--from` and
+  `--terminal`.
+- **The plugin is the coordinator.** It may take its own Runs' mail with a consuming `check`. It never
+  steers a worker through its terminal: it uses `send` and `reply`.
+- **Live tests clean up after themselves.** A live run leaves a "Buzz mailbox" terminal in the repo:
+  close it. Never run a live test from a self-restarting launcher (`launchctl submit`, a watch loop).
+
+## Layout
+
+| Path | What it is |
+| --- | --- |
+| `src/index.tsx` | `apply(ctx)`: registers the agent type, its tabs and icon |
+| `src/runtime.ts` | Turns Buzz mentions into Orca workers and posts their mail |
+| `src/orca.ts` | Orca's CLI over Buzz's `host.spawn`, and its JSON envelope |
+| `src/spec.ts` | The worker's brief, names, placement flags and reply texts |
+| `src/settings.ts` | Config, defaults and the repo selector |
+| `src/tabs.tsx` | New agent fields, Settings tab and Activity tab |
+| `src/ui.tsx` | Buzz-styled controls |
+| `src/buzz.ts` | The Buzz plugin API types this plugin uses |
+| `src/fake.ts` | Test doubles: a fake `orca`, a fake harness kit, memory storage |
+
+## Checks
+
+- `npm test`: unit tests, including loading the built `plugin.js` and rendering every view.
+- `npm run typecheck`.
+- `ORCA_LIVE=1 ORCA_REPO=<repo> npx vitest run src/runtime.live.test.ts`: a real worker in your Orca
+  (`ORCA_AGENT` picks the agent, default `claude`). Nothing reaches Buzz.
+- Before a release, also try the change in Buzz itself: install from `plugin/`, create an Orca agent,
+  mention it, and check its reply and its Activity tab.
+
+## Releases
+
+1. Update `version` in `package.json` and add notes to `CHANGELOG.md`.
+2. `npm run build && npm run check`.
+3. Commit, tag `vX.Y.Z` and push.
