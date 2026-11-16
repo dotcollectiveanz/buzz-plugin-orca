@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type Answer, fakeKit, fakeOrca, memoryStorage, mention, THREAD } from "./fake";
+import { beforeEach } from "vitest";
+import { type Answer, chat, fakeKit, fakeOrca, memoryStorage, mention, profile, relay, THREAD } from "./fake";
 import { Orca } from "./orca";
 import { MAILBOXES_KEY, OrcaRuntime } from "./runtime";
 
@@ -36,6 +37,88 @@ function orcaWith(mail: Answer[], extra: (args: string[]) => Answer | undefined 
 const flag = (args: string[], name: string) => args[args.indexOf(name) + 1];
 
 describe("OrcaRuntime", () => {
+  beforeEach(() => {
+    relay.events = [];
+    relay.queries = [];
+  });
+
+  it("shows a new worker the conversation so far, with names, like Buzz's own agents", async () => {
+    relay.events = [
+      profile("ownerpub", "Oscar"),
+      profile("annpub", "Ann"),
+      chat(THREAD.root!, "annpub", 900, "The checkout button is broken on mobile"),
+      chat("own", "agentpub", 950, "an earlier reply of the agent's own"),
+      chat("later", "annpub", 2_000, "sent after the mention"),
+    ];
+    const { spawn, calls } = orcaWith([{ result: { messages: [{ id: "m", type: "worker_done", body: "ok" }] } }]);
+    const { kit } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("nostr:npub1x can you fix this?", CONFIG);
+    await runtime.run(delivery);
+    await Promise.all(working);
+    const spec = calls.find((call) => call.args[1] === "worker-start")!.input;
+    expect(spec).toContain("Oscar asked the Buzz agent");
+    expect(spec).toContain("Ann (");
+    expect(spec).toContain("The checkout button is broken on mobile");
+    expect(spec).toContain("The request from Oscar:\n\ncan you fix this?");
+    expect(spec).not.toContain("an earlier reply of the agent's own");
+    expect(spec).not.toContain("sent after the mention");
+    expect(spec).toContain("orca orchestration send --type status");
+    expect(relay.queries[0]).toContainEqual(expect.objectContaining({ "#e": [THREAD.root] }));
+    expect(runtime.records()[0]?.seen).toBe(1_000);
+  });
+
+  it("sends a follow-up only what was said since the worker last heard", async () => {
+    const { spawn, calls } = orcaWith([
+      { result: { messages: [{ id: "m1", type: "worker_done", body: "Done." }] } },
+      { result: { messages: [{ id: "m2", type: "worker_done", body: "Again." }] } },
+    ]);
+    const { kit } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    relay.events = [chat("old", "annpub", 500, "old news")];
+    const first = mention("first ask", CONFIG, { id: "a".repeat(64), at: 1_000 });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    relay.events.push(chat("between", "annpub", 1_500, "a note in between"));
+    const second = mention("second ask", CONFIG, { id: "b".repeat(64), at: 2_000 });
+    await runtime.run(second.delivery);
+    await Promise.all(second.working);
+    const body = flag(calls.find((call) => call.args[1] === "send")!.args, "--body");
+    expect(body).toContain("a note in between");
+    expect(body).not.toContain("old news");
+    expect(body).toContain("New message from the owner:\n\nsecond ask");
+    expect(runtime.records()[0]?.seen).toBe(2_000);
+  });
+
+  it("posts the worker's messages as it works, then its reply", async () => {
+    const { spawn } = orcaWith([
+      { result: { messages: [{ id: "s1", type: "status", subject: "Looking", body: "Found the bug in cart.liquid." }] } },
+      { result: { messages: [{ id: "h", type: "heartbeat" }, { id: "s2", type: "status", subject: "Tests running" }] } },
+      { result: { messages: [{ id: "m", type: "worker_done", body: "Fixed and tested." }] } },
+    ]);
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("fix the cart", CONFIG);
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(posted.map((post) => post.text)).toEqual([
+      "Found the bug in cart.liquid.",
+      "Tests running",
+      "Fixed and tested.",
+    ]);
+    expect(runtime.records()[0]?.status).toBe("done");
+  });
+
+  it("still starts when the conversation can't be read", async () => {
+    const { spawn, calls } = orcaWith([{ result: { messages: [{ id: "m", type: "worker_done", body: "ok" }] } }]);
+    const { kit } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("go", CONFIG);
+    await runtime.run({ ...delivery, agent: { ...delivery.agent, query: async () => { throw new Error("offline"); } } });
+    await Promise.all(working);
+    expect(calls.some((call) => call.args[1] === "worker-start")).toBe(true);
+  });
+
   it("starts a worker for a new thread and posts its report", async () => {
     const { spawn, calls } = orcaWith([
       { result: { messages: [{ id: "m1", type: "worker_done", body: "Fixed the header.", payload: { outcome: "succeeded", dispatchId: "ctx_1" } }] } },
@@ -61,13 +144,11 @@ describe("OrcaRuntime", () => {
     expect(start!.input).not.toContain("nostr:");
     const check = calls.find((call) => call.args[1] === "check");
     expect(flag(check!.args, "--terminal")).toBe("term_mail");
-    expect(flag(check!.args, "--types")).toBe("worker_done,question,escalation");
+    expect(flag(check!.args, "--types")).toBe("status,worker_done,question,escalation");
     expect(start!.env?.ORCA_TERMINAL_HANDLE).toBeNull();
 
-    expect(posted.map((post) => post.text)).toEqual([
-      "On it: claude is working in a new Orca workspace, `buzz-fix-the-header-please-abcdef`.",
-      "Fixed the header.",
-    ]);
+    // Like Buzz's own agents, it posts nothing of its own: only the reply.
+    expect(posted.map((post) => post.text)).toEqual(["Fixed the header."]);
     expect(JSON.parse(storage.getItem(MAILBOXES_KEY) ?? "{}")).toEqual({ "/code/shop": "term_mail" });
     expect(runtime.records()[0]).toMatchObject({ status: "done", run: "run_1", dispatch: "ctx_1" });
   });
@@ -89,7 +170,7 @@ describe("OrcaRuntime", () => {
     expect(calls.filter((call) => call.args[1] === "worker-start")).toHaveLength(1);
     const send = calls.find((call) => call.args[1] === "send");
     expect(flag(send!.args, "--to")).toBe("dispatch:ctx_1");
-    expect(flag(send!.args, "--body")).toBe("now make it green");
+    expect(flag(send!.args, "--body")).toContain("New message from the owner:\n\nnow make it green");
     // The mailbox is reused while its terminal is live.
     expect(calls.filter((call) => call.args[0] === "terminal" && call.args[1] === "create")).toHaveLength(1);
     expect(posted.at(-1)?.text).toBe("Also done.");
@@ -114,7 +195,7 @@ describe("OrcaRuntime", () => {
     await Promise.all(answer.working);
     const reply = calls.find((call) => call.args[1] === "reply");
     expect(flag(reply!.args, "--id")).toBe("q1");
-    expect(flag(reply!.args, "--body")).toBe("main");
+    expect(flag(reply!.args, "--body")).toContain("main");
     expect(posted.at(-1)?.text).toBe("Shipped on main.");
   });
 
@@ -153,7 +234,7 @@ describe("OrcaRuntime", () => {
     await Promise.all(working);
     expect(calls.some((call) => call.args[0] === "repo" && call.args[1] === "show")).toBe(false);
     expect(flag(calls.find((call) => call.args[1] === "worker-start")!.args, "--repo")).toBe("id:repo-1");
-    expect(posted[0]?.text).toContain("No repository is set for this agent, so I used shop");
+    expect(posted[0]?.text).toContain("No repository is set for this agent, so this runs in shop");
   });
 
   it("says when Orca has no repositories", async () => {

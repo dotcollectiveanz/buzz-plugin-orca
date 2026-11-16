@@ -12,11 +12,14 @@ import type {
   Delivery,
   HarnessConversation,
   HarnessKit,
+  RelayEvent,
 } from "./buzz";
 import { launchChoice } from "./choices";
+import { contextText, readConversation } from "./context";
 import { type Message, type Orca, OrcaError, type Repo } from "./orca";
 import { type Config, config, repoSelector } from "./settings";
 import {
+  followUpText,
   messageText,
   placementArgs,
   questionText,
@@ -33,8 +36,9 @@ export const MAILBOXES_KEY = "buzz-plugin-orca.mailboxes.v1";
 const RECORDS_LIMIT = 200;
 /** How long one `check --wait` blocks before it is asked again. */
 export const WAIT_MS = 10 * 60_000;
-/** The mail that ends a wait: a report, a question, or a stop. */
-export const WAKE = ["worker_done", "question", "escalation"] as const;
+/** The mail a wait takes: a message for the conversation, or a report, a
+ * question or a stop, which end the turn. */
+export const WAKE = ["status", "worker_done", "question", "escalation"] as const;
 /** Failed checks in a row before the conversation is told. */
 const CHECK_RETRIES = 3;
 
@@ -56,6 +60,8 @@ export type ConversationRecord = Readonly<{
   workspace?: string;
   terminal?: string;
   status: Status;
+  /** The newest conversation message (seconds) the worker has been shown. */
+  seen?: number;
   /** The worker's open question, answered by the next mention. */
   question?: string;
   error?: string;
@@ -173,7 +179,7 @@ export class OrcaRuntime {
     // Handing over is one at a time per conversation; waiting for the worker
     // is not, so a follow-up reaches Orca while the worker is still busy.
     const handed = this.exclusive(id, () =>
-      this.turn(id, delivery, settings, conversation, messageText(event.content), resumed, event.id),
+      this.turn(id, delivery, settings, conversation, event, resumed),
     );
     // Buzz reads `{ ok: false, error }` as a failed request; the turn has
     // already told the conversation why.
@@ -205,27 +211,33 @@ export class OrcaRuntime {
     delivery: Delivery<unknown>,
     settings: Config,
     conversation: HarnessConversation,
-    request: string,
+    event: RelayEvent,
     resumed: boolean,
-    eventId: string,
   ) {
     const existing = this.record(id);
     const open = existing && (existing.status === "working" || existing.status === "question");
+    const request = messageText(event.content);
     try {
       if (existing && resumed && open) {
         // The app closed while this turn was working: keep waiting for it.
-      } else if (existing?.status === "question" && existing.question) {
+        return;
+      }
+      // What was said since the worker last heard from the conversation, as
+      // Buzz's own harnesses show a session the messages it hasn't seen.
+      const said = await readConversation(delivery.agent, conversation, event, existing?.seen ?? 0);
+      const context = contextText(said.messages);
+      if (existing?.status === "question" && existing.question) {
         delivery.step?.("orca", "answer");
         await this.orca.reply(
           {
             from: existing.mailbox,
             run: existing.run,
             id: existing.question,
-            body: request || "(The owner replied with no text.)",
+            body: followUpText({ request, from: said.from, context }),
           },
           this.lifetime.signal,
         );
-        this.update(id, { status: "working", question: undefined, error: undefined });
+        this.update(id, { status: "working", question: undefined, error: undefined, seen: said.latest });
       } else if (existing) {
         delivery.step?.("orca", "follow-up");
         try {
@@ -234,22 +246,24 @@ export class OrcaRuntime {
               from: existing.mailbox,
               run: existing.run,
               dispatch: existing.dispatch,
-              subject: taskTitle(request),
-              body: request || "(The owner sent no text.)",
+              subject: `Message from ${said.from}`,
+              body: followUpText({ request, from: said.from, context }),
             },
             this.lifetime.signal,
           );
-          this.update(id, { status: "working", error: undefined });
+          this.update(id, { status: "working", error: undefined, seen: said.latest });
         } catch (error) {
           if (error instanceof OrcaError && error.code === "missing") throw error;
           await this.say(
             id,
             `The earlier Orca worker could not be reached (${errorText(error)}), so a new one is starting.`,
           );
-          await this.start(id, delivery, settings, conversation, request, eventId);
+          // A new worker is shown the whole conversation.
+          const all = await readConversation(delivery.agent, conversation, event, 0);
+          await this.start(id, delivery, settings, conversation, event, request, all.from, contextText(all.messages), all.latest);
         }
       } else {
-        await this.start(id, delivery, settings, conversation, request, eventId);
+        await this.start(id, delivery, settings, conversation, event, request, said.from, context, said.latest);
       }
       const record = this.record(id);
       if (record) delivery.named?.(record.title);
@@ -266,8 +280,11 @@ export class OrcaRuntime {
     delivery: Delivery<unknown>,
     settings: Config,
     conversation: HarnessConversation,
+    event: RelayEvent,
     request: string,
-    eventId: string,
+    from: string,
+    context: string,
+    seen: number,
   ) {
     if (!request) throw new Error("The message has no request in it.");
     const signal = this.lifetime.signal;
@@ -275,19 +292,19 @@ export class OrcaRuntime {
     // With no repository chosen (an agent switched to this type keeps none),
     // the agent uses Orca's first one and says so, rather than refusing.
     const selector = repoSelector(settings.repo);
-    let chosen = "";
     let repo: Repo;
+    let fallback = false;
     if (selector) repo = await this.orca.repo(selector, signal);
     else {
       const [first] = await this.orca.repos(signal);
       if (!first) throw new Error("Orca has no repositories. Add one in Orca, then try again.");
       repo = first;
-      chosen = ` No repository is set for this agent, so I used ${first.displayName || first.path}: choose another in its Settings.`;
+      fallback = true;
     }
     const mailbox = await this.mailbox(repo, signal);
     const title = taskTitle(request);
     const run = await this.orca.runCreate(mailbox, `Buzz: ${title}`, signal);
-    const name = workspaceName(title, conversation.root ?? eventId);
+    const name = workspaceName(title, conversation.root ?? event.id);
     delivery.step?.("orca", "worker");
     const started = await this.orca.workerStart(
       {
@@ -295,9 +312,11 @@ export class OrcaRuntime {
         run,
         spec: workerSpec({
           request,
+          from,
           where: conversation.where,
           agentName: delivery.agent.name,
           instructions: settings.instructions,
+          context,
         }),
         title,
         agent: settings.agent,
@@ -326,12 +345,17 @@ export class OrcaRuntime {
       ...(started.workspace && { workspace: started.workspace }),
       ...(started.terminal && { terminal: started.terminal }),
       status: "working",
+      seen,
       startedAt: now,
       updatedAt: now,
     });
-    const place =
-      settings.placement === "new" ? `a new Orca workspace, \`${name}\`` : `\`${repo.displayName || repo.path}\` in Orca`;
-    await this.say(id, `On it: ${settings.agent} is working in ${place}.${chosen}`);
+    // Like Buzz's own agents, it says nothing until the worker does, except
+    // when it had to pick the repository itself.
+    if (fallback)
+      await this.say(
+        id,
+        `No repository is set for this agent, so this runs in ${repo.displayName || repo.path}. Choose another in its Settings.`,
+      );
   }
 
   /** The repository's mailbox terminal, made again when it has gone. */
@@ -393,6 +417,12 @@ export class OrcaRuntime {
   /** Posts one message of the Run's mail. True when the wait is over. */
   private async deliver(id: string, message: Message) {
     const dispatch = message.payload?.dispatchId;
+    if (message.type === "status") {
+      // A message the worker posts while it works; the turn goes on.
+      const text = (message.body ?? "").trim() || (message.subject ?? "").trim();
+      if (text) await this.say(id, text);
+      return false;
+    }
     if (message.type === "worker_done") {
       this.update(id, { status: "done", ...(dispatch && { dispatch }) });
       await this.say(id, reportText(message.body ?? message.subject ?? "", message.payload?.outcome));

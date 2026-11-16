@@ -50,27 +50,48 @@ export function placementArgs(
   ];
 }
 
-/** The worker's Task: who asked and where, the agent's instructions, the
- * request, and how its report gets back to Buzz. */
+/** How the worker talks with the Buzz conversation, as Buzz's own Claude
+ * agent does with its tools: messages any time, a final reply, questions. */
+export const RELAY = [
+  "You are the Buzz agent in this conversation: whatever you post appears in Buzz as its message, so write as you would reply in chat. Your messages go only to this conversation.",
+  "- To post a message while you work (a progress note, a partial result, a link to look at), run `orca orchestration send --type status --subject \"<a few words>\" --body \"<the message>\"`. Post when it helps the person; not for every step.",
+  "- Your `worker_done` report is your reply for this turn: write it for the person who asked, with what you did, the outcome and its evidence, and anything open. Markdown is fine.",
+  "- If you need a decision or information only they have, `ask` the coordinator and end your turn. Your question is posted to them, and their answer comes back to you.",
+  "- New messages in the conversation reach you as follow-up Tasks, with what was said since your last message.",
+].join("\n");
+
+/** The worker's Task: who asked and where, the agent's instructions, what was
+ * said before in the conversation, the request, and how to talk back. */
 export function workerSpec(
   options: Readonly<{
     request: string;
+    from?: string;
     where: string;
     agentName: string;
     instructions: string;
+    context?: string;
   }>,
 ) {
   const instructions = options.instructions.trim();
   return [
-    `This Task comes from Buzz, DotCollective's chat: the owner of the Buzz agent "${options.agentName}" asked for it in ${options.where}.`,
-    instructions && `Standing instructions from the owner:\n\n${instructions}`,
-    `The request:\n\n${options.request}`,
-    [
-      "How your work gets back to them:",
-      "- Your `worker_done` report is posted to the Buzz conversation as the agent's reply. Write it for the person who asked: what you did, the outcome and its evidence, and anything still open. Keep it short. Markdown is fine.",
-      "- If you need a decision or information only they have, `ask` the coordinator and end your turn. The question is posted to them in Buzz, and their answer comes back to you.",
-      "- More messages from them in the same conversation reach you as follow-up Tasks.",
-    ].join("\n"),
+    `This Task comes from Buzz, DotCollective's chat: ${options.from ?? "the owner"} asked the Buzz agent "${options.agentName}" in ${options.where}.`,
+    instructions && `The agent's standing instructions:\n\n${instructions}`,
+    options.context && `Earlier in the conversation (context, not new requests):\n\n${options.context}`,
+    `The request from ${options.from ?? "the owner"}:\n\n${options.request}`,
+    RELAY,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** A follow-up for a worker: what was said since, then the new message. */
+export function followUpText(
+  options: Readonly<{ request: string; from: string; context?: string }>,
+) {
+  return [
+    options.context && `Said in the conversation since your last message (context, not new requests):\n\n${options.context}`,
+    `New message from ${options.from}:\n\n${options.request || "(no text)"}`,
+    "Reply as before: `status` messages while you work if useful, and `worker_done` with your reply.",
   ]
     .filter(Boolean)
     .join("\n\n");

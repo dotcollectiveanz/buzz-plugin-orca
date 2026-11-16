@@ -10,6 +10,9 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
 
 ## What it does
 
+- **Chat both ways.** As with Buzz's own Claude agent: the worker sees the conversation (what was
+  said before, then each new message with what was said since), and its messages appear in the
+  thread as the agent while it works, ending with its reply.
 - **One worker per conversation.** Each thread (or each channel, if you choose) gets its own
   supervised Orca worker, in a new Orca workspace or in the repository's own checkout.
 - **Follow-ups go to the same worker.** Another message in the thread reaches the worker as a
@@ -56,9 +59,11 @@ The plugin is an Orca orchestration coordinator. For each conversation it:
    sends workers' mail to a terminal and Buzz is not one. The terminal runs `cat > /dev/null`, so
    nothing typed into it does anything;
 2. creates a Run from that mailbox (`orca orchestration run-create --from <mailbox>`);
-3. starts a worker with the request as its Task (`orca orchestration worker-start --spec-file -`);
-4. waits for the Run's mail (`orca orchestration check --terminal <mailbox> --wait`) and posts a
-   `worker_done` report, a `question` or an `escalation` to the conversation.
+3. starts a worker with the request as its Task (`orca orchestration worker-start --spec-file -`),
+   with the conversation's earlier messages, read as the agent, and how to post back;
+4. waits for the Run's mail (`orca orchestration check --terminal <mailbox> --wait`) and posts each
+   `status` message (the worker's messages while it works) to the conversation, then the
+   `worker_done` reply, a `question` or an `escalation`, which end the turn.
 
 A later message goes to the worker with `orchestration send`, or answers its question with
 `orchestration reply`. Each conversation's Run, worker and state are kept in Buzz's local storage.

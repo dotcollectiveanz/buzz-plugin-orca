@@ -54,14 +54,14 @@ async function spawn(id: string, options: HostProcessOptions = {}): Promise<Host
 
 describe.runIf(live)("live Orca", () => {
   it(
-    "runs a worker from a mention and posts its report",
+    "runs a worker from a mention and posts its messages and reply",
     async () => {
       const { kit, posted } = fakeKit(THREAD);
       const storage = memoryStorage();
       const orca = new Orca(spawn);
       const runtime = new OrcaRuntime(kit, orca, storage);
       const { delivery, working } = mention(
-        "Live test of the Buzz to Orca plugin. Do not edit, create or delete any file, and run no commands. Report done with the summary: pong",
+        "Live test of the Buzz to Orca plugin. Do not edit, create or delete any file, and run no commands except Orca's. First post a message to the conversation saying exactly: ping. Then report done with the summary: pong",
         {
           repo: process.env.ORCA_REPO ?? "",
           agent: process.env.ORCA_AGENT ?? "claude",
@@ -79,8 +79,8 @@ describe.runIf(live)("live Orca", () => {
       for (const handle of Object.values(mailboxes))
         await orca.call(["terminal", "close", "--terminal", handle, "--tab"]).catch(() => undefined);
       console.log(posted);
-      expect(posted[0]?.text).toMatch(/^On it:/);
-      expect(posted.at(-1)?.text).toMatch(/pong/i);
+      // The worker's message while it works, then its reply, and nothing else.
+      expect(posted.map((post) => post.text.trim().toLowerCase())).toEqual(["ping", "pong"]);
       expect(runtime.records()[0]?.status).toBe("done");
     },
     10 * 60_000,

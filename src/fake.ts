@@ -7,6 +7,7 @@ import type {
   HarnessKit,
   HostProcess,
   HostProcessOptions,
+  RelayEvent,
 } from "./buzz";
 import type { Spawn } from "./orca";
 
@@ -71,6 +72,9 @@ export function fakeKit(conversation: HarnessConversation | undefined) {
   return { kit, posted };
 }
 
+/** What the fake relay holds: chat messages and profiles, by kind. */
+export const relay: { events: RelayEvent[]; queries: object[][] } = { events: [], queries: [] };
+
 export const AGENT: AgentHandle = {
   key: "agentpub:wss://relay.example",
   pubkey: "agentpub",
@@ -80,7 +84,22 @@ export const AGENT: AgentHandle = {
   publish: async () => {
     throw new Error("not used");
   },
+  query: async (filters) => {
+    relay.queries.push([...filters]);
+    const kinds = new Set(filters.flatMap((filter) => (filter as { kinds?: number[] }).kinds ?? []));
+    return relay.events.filter((event) => kinds.has(event.kind));
+  },
 };
+
+/** A chat message on the fake relay. */
+export function chat(id: string, pubkey: string, at: number, content: string): RelayEvent {
+  return { id, pubkey, created_at: at, kind: 9, content, tags: [] };
+}
+
+/** A profile on the fake relay. */
+export function profile(pubkey: string, name: string): RelayEvent {
+  return { id: `p-${pubkey}`, pubkey, created_at: 1, kind: 0, content: JSON.stringify({ display_name: name }), tags: [] };
+}
 
 export const THREAD: HarnessConversation = {
   key: "chan/abcdef0123456789",
@@ -93,21 +112,21 @@ export const THREAD: HarnessConversation = {
 export function mention(
   content: string,
   config: unknown,
-  extra: Partial<{ resumed: true }> = {},
+  extra: Partial<{ resumed: true; id: string; at: number }> = {},
 ) {
   const working: PromiseLike<unknown>[] = [];
   const delivery: Delivery<unknown> = {
     trigger: {
       type: "mention",
       event: {
-        id: "e".repeat(64),
+        id: extra.id ?? "e".repeat(64),
         pubkey: "ownerpub",
-        created_at: 1,
+        created_at: extra.at ?? 1_000,
         kind: 9,
         content,
         tags: [],
       },
-      ...extra,
+      ...(extra.resumed && { resumed: true as const }),
     },
     agent: AGENT,
     config,

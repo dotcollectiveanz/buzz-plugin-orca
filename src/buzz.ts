@@ -34,6 +34,8 @@ export type AgentHandle = Readonly<{
   name: string;
   owner: string;
   publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
+  /** Reads the community as the agent, seeing only what it may see. */
+  query(filters: readonly object[]): Promise<RelayEvent[]>;
 }>;
 
 export type Trigger =

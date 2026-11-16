@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 (16 Nov 2026)
+
+- **Chat both ways, as with Buzz's own Claude agent.** A worker now sees the conversation, not only
+  the message that mentioned it: a new worker is shown what was said before, with each person's
+  name, and each later message reaches it with what was said since its last one.
+- **The worker talks in the thread while it works.** Its messages (progress, a partial result, a
+  link) are posted to the conversation as the agent as they come, then its reply ends the turn.
+  Questions and stops still come to you as before.
+- **No extra messages.** The agent no longer posts "On it" when a worker starts; Buzz shows it as
+  working, as it does for its own agents.
+
 ## 0.3.1 (16 Nov 2026)
 
 - **Fix: Model and Thinking defaults.** Model's default now reads "Claude Code default" (or the
