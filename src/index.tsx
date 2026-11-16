@@ -41,7 +41,13 @@ export function apply(ctx: Context) {
     ...(tabs && {
       Create: tabs.Create,
       tabs: [
-        { id: "settings", title: "Settings", role: "settings", component: tabs.SettingsTab },
+        {
+          id: "settings",
+          title: "Settings",
+          role: "settings",
+          splitSettings: true,
+          component: tabs.SettingsTab,
+        },
         { id: "activity", title: "Activity", role: "activity", component: tabs.ActivityTab },
       ],
     }),

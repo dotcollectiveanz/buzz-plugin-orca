@@ -6,7 +6,7 @@
 // NOTICE.md. Keep it in step with the Buzz release in `BUZZ_REF`
 // (scripts/types.mjs) when the API changes.
 import type * as ReactTypes from "react";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 /** One agent's membership in one community: `<pubkey>:<relay>` style key. */
 export type AgentKey = string;
@@ -96,11 +96,27 @@ export type Agent<Config = unknown> = Readonly<{
   config: Config;
 }>;
 
+/** The host's framing for a Settings tab. */
+export type AgentSettingsHost = Readonly<{
+  /** The labelled Harness control, to place in the tab: without it the agent
+   * can't change type. `dirty` says the tab has unsaved changes. */
+  typeControl?: (dirty: boolean, action?: ReactNode) => ReactNode;
+  /** Set while a type change waits for the tab's Save. */
+  pendingSave?: (config?: unknown) => Promise<void>;
+}>;
+
 export type AgentViewProps<Config = unknown> = {
   agent: Agent<Config>;
   openConversation?: (channelId: string, threadRootId?: string) => void;
   /** Replaces the type's whole config: spread `agent.config` to change one field. */
   save(config: Config): Promise<void>;
+  /** Host identity and retype framing, for a Settings tab only. */
+  settingsHost?: AgentSettingsHost;
+  /** With `splitSettings`, which part of the tab to show: the identity part
+   * (Harness, the main choices, instructions) or the runtime part. */
+  settingsSection?: "identity" | "runtime";
+  /** Host management rows, shown in the runtime part. */
+  settingsContent?: ReactNode;
 };
 
 export type AgentCreateProps<Config = unknown> = {

@@ -193,6 +193,17 @@ export class Orca {
     return repo;
   }
 
+  /** A repository's branches and tags, as base refs for a new workspace:
+   * remote refs as `origin/<name>`, local ones by their branch name. */
+  async refs(selector: string, signal?: AbortSignal): Promise<readonly string[]> {
+    const result = await this.call<{ refs?: string[] }>(
+      ["repo", "search-refs", "--repo", selector, "--query", "*", "--limit", "100"],
+      { signal },
+    );
+    const names = (result.refs ?? []).map((ref) => ref.replace(/^refs\/(heads|tags)\//, ""));
+    return [...new Set(names)];
+  }
+
   /** Whether a terminal handle is still live in Orca. */
   async live(handle: string, signal?: AbortSignal) {
     try {
@@ -269,7 +280,8 @@ export class Orca {
       options.agent,
       ...options.placement,
       ...(options.model ? ["--model", options.model] : []),
-      ...(options.effort ? ["--effort", options.effort] : []),
+      // Orca takes an effort only with a model.
+      ...(options.model && options.effort ? ["--effort", options.effort] : []),
       ...(options.keepOpen ? ["--keep-open"] : []),
     ];
     const result = await this.call<Partial<Started>>(args, {

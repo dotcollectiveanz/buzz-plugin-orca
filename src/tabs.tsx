@@ -1,180 +1,217 @@
-// The Orca harness's views: its fields in the New agent dialog, its Settings
-// tab, and an Activity tab listing each conversation's worker.
-import type {
-  AgentCreateProps,
-  AgentViewProps,
-} from "./buzz";
+// The Orca harness's views, in Buzz's own controls: its part of the New agent
+// dialog, its Settings tab (split into identity and runtime parts, with the
+// host's Harness row first), and an Activity tab of each conversation's worker.
+import { AGENTS, MODELS } from "./catalog";
+import type { AgentCreateProps, AgentSettingsHost, AgentViewProps } from "./buzz";
 import type { Orca, Repo } from "./orca";
 import { React } from "./react";
 import type { ConversationRecord, OrcaRuntime, Status } from "./runtime";
 import { type Config, config, repoSelector } from "./settings";
 import {
   Button,
-  Field,
+  type Choice,
+  ChoiceRow,
   Instructions,
-  PreferenceRow,
-  Select,
+  layout,
+  SectionHeader,
   SettingsGroup,
-  TextInput,
   Toggle,
 } from "./ui";
 
-type Connection =
-  | { state: "checking" }
-  | { state: "ready"; repos: readonly Repo[] }
-  | { state: "error"; message: string };
+type Read<T> =
+  | Readonly<{ state: "loading" }>
+  | Readonly<{ state: "ready"; value: T }>
+  | Readonly<{ state: "error"; message: string }>;
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** Orca's state and repositories, read once per view. */
-function useOrca(orca: Orca | undefined): Connection {
-  const [connection, setConnection] = React.useState<Connection>({ state: "checking" });
+/** Reads `load` once per `key`; nothing while `key` is empty. */
+function useRead<T>(key: string, load: ((signal: AbortSignal) => Promise<T>) | undefined): Read<T> {
+  const [read, setRead] = React.useState<Read<T>>({ state: "loading" });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on `key`.
   React.useEffect(() => {
-    if (!orca) {
-      setConnection({ state: "error", message: "Orca runs only in Buzz desktop." });
-      return;
-    }
+    if (!key || !load) return;
     const abort = new AbortController();
-    (async () => {
-      try {
-        // Opens Orca first when it is not running.
-        const repos = await orca.repos(abort.signal);
-        setConnection({ state: "ready", repos });
-      } catch (error) {
-        if (!abort.signal.aborted)
-          setConnection({ state: "error", message: errorText(error) });
-      }
-    })();
+    setRead({ state: "loading" });
+    load(abort.signal).then(
+      (value) => !abort.signal.aborted && setRead({ state: "ready", value }),
+      (error) =>
+        !abort.signal.aborted && setRead({ state: "error", message: errorText(error) }),
+    );
     return () => abort.abort();
-  }, [orca]);
-  return connection;
+  }, [key]);
+  return read;
 }
 
-function Fields({
-  value,
-  connection,
-  disabled,
-  onChange,
-}: {
+const DEFAULT = "";
+const PLACEMENTS: readonly Choice[] = [
+  { value: "new", label: "New workspace each time" },
+  { value: "main", label: "Repository checkout" },
+];
+const SCOPES: readonly Choice[] = [
+  { value: "thread", label: "One worker per thread" },
+  { value: "channel", label: "One worker per channel" },
+];
+
+const agentChoices = (current: string): Choice[] => [
+  ...AGENTS.map((agent) => ({ value: agent.id, label: agent.label })),
+  ...(AGENTS.some((agent) => agent.id === current) ? [] : [{ value: current, label: current }]),
+];
+
+const modelsOf = (agent: string) => MODELS[agent] ?? [];
+
+function modelChoices(agent: string, current: string): Choice[] {
+  const models = modelsOf(agent);
+  const fallback = models.find((model) => model.isDefault)?.label;
+  return [
+    { value: DEFAULT, label: fallback ? `Default (${fallback})` : "Agent default" },
+    ...models.map((model) => ({ value: model.id, label: model.label })),
+    ...(current && !models.some((model) => model.id === current)
+      ? [{ value: current, label: current }]
+      : []),
+  ];
+}
+
+function effortChoices(agent: string, model: string, current: string): Choice[] {
+  const found = modelsOf(agent).find((item) => item.id === model);
+  const efforts = found?.efforts ?? [];
+  const fallback = efforts.find((effort) => effort.id === found?.defaultEffort)?.label;
+  return [
+    { value: DEFAULT, label: fallback ? `Default (${fallback})` : "Default" },
+    ...efforts.map((effort) => ({ value: effort.id, label: effort.label })),
+    ...(current && !efforts.some((effort) => effort.id === current)
+      ? [{ value: current, label: current }]
+      : []),
+  ];
+}
+
+/** A change of agent or model drops a model or effort it doesn't offer. */
+export function fit(next: Config): Config {
+  const models = modelsOf(next.agent);
+  const model =
+    next.model && models.length && !models.some((item) => item.id === next.model)
+      ? DEFAULT
+      : next.model;
+  const efforts = models.find((item) => item.id === model)?.efforts ?? [];
+  const effort =
+    !model || (next.effort && !efforts.some((item) => item.id === next.effort))
+      ? DEFAULT
+      : next.effort;
+  return { ...next, model, effort };
+}
+
+type PartProps = Readonly<{
   value: Config;
-  connection: Connection;
+  repos: Read<readonly Repo[]>;
+  refs: Read<readonly string[]>;
   disabled: boolean;
   onChange(value: Config): void;
-}) {
-  const ids = {
-    repo: React.useId(),
-    agent: React.useId(),
-    placement: React.useId(),
-    base: React.useId(),
-    model: React.useId(),
-    effort: React.useId(),
-    scope: React.useId(),
-  };
-  const set = (change: Partial<Config>) => onChange({ ...value, ...change });
+}>;
+
+/** Where workers start and which agent they are: the identity part. */
+function IdentityRows({
+  value,
+  repos,
+  disabled,
+  onChange,
+  typeControl,
+}: PartProps & { typeControl?: React.ReactNode }) {
+  const set = (change: Partial<Config>) => onChange(fit({ ...value, ...change }));
   const selected = repoSelector(value.repo);
-  const repos = connection.state === "ready" ? connection.repos : [];
-  const repoOptions = [
-    { value: "", label: "Choose a repository" },
-    ...repos.map((repo) => ({ value: `id:${repo.id}`, label: repo.displayName || repo.path })),
-    ...(selected && !repos.some((repo) => `id:${repo.id}` === selected)
-      ? [{ value: selected, label: value.repo }]
+  const listed = repos.state === "ready" ? repos.value : [];
+  const repoChoices: Choice[] = [
+    ...listed.map((repo) => ({ value: `id:${repo.id}`, label: repo.displayName || repo.path })),
+    ...(selected && !listed.some((repo) => `id:${repo.id}` === selected)
+      ? [{ value: selected, label: value.repo.replace(/^(name|path|id):/, "") }]
+      : []),
+  ];
+  const models = modelsOf(value.agent);
+  return (
+    <SettingsGroup>
+      {typeControl}
+      <ChoiceRow
+        title="Repository"
+        value={selected}
+        valueLabel={selected ? undefined : repos.state === "loading" ? "Loading…" : "Choose"}
+        choices={repoChoices}
+        loading={repos.state === "loading"}
+        disabled={disabled}
+        description={repos.state === "error" ? repos.message : undefined}
+        onChange={(repo) => set({ repo })}
+      />
+      <ChoiceRow
+        title="Coding agent"
+        value={value.agent}
+        choices={agentChoices(value.agent)}
+        disabled={disabled}
+        onChange={(agent) => set({ agent })}
+      />
+      <ChoiceRow
+        title="Model"
+        value={value.model}
+        choices={modelChoices(value.agent, value.model)}
+        disabled={disabled || (!models.length && !value.model)}
+        onChange={(model) => set({ model })}
+      />
+      <ChoiceRow
+        title="Thinking"
+        value={value.effort}
+        choices={effortChoices(value.agent, value.model, value.effort)}
+        disabled={disabled || !value.model}
+        description={value.model ? undefined : "Choose a model to set its effort."}
+        onChange={(effort) => set({ effort })}
+      />
+    </SettingsGroup>
+  );
+}
+
+/** How each worker runs: the runtime part. */
+function RuntimeRows({ value, refs, disabled, onChange }: PartProps) {
+  const set = (change: Partial<Config>) => onChange({ ...value, ...change });
+  const refList = refs.state === "ready" ? refs.value : [];
+  const baseChoices: Choice[] = [
+    { value: DEFAULT, label: "Repository default" },
+    ...refList.map((ref) => ({ value: ref, label: ref })),
+    ...(value.baseBranch && !refList.includes(value.baseBranch)
+      ? [{ value: value.baseBranch, label: value.baseBranch }]
       : []),
   ];
   return (
-    <div style={{ display: "grid", gap: "var(--space-4)" }}>
-      <SettingsGroup layout="rows">
-        <PreferenceRow
-          title="Orca"
-          description={
-            connection.state === "checking"
-              ? "Checking Orca…"
-              : connection.state === "ready"
-                ? `Connected. ${repos.length} ${repos.length === 1 ? "repository" : "repositories"}.`
-                : connection.message
-          }
-        />
-      </SettingsGroup>
-      <Field
-        id={ids.repo}
-        label="Repository"
-        description="Workers start in this Orca repository."
-      >
-        <Select
-          id={ids.repo}
-          value={selected}
-          options={repoOptions}
-          disabled={disabled}
-          onChange={(repo) => set({ repo })}
-        />
-      </Field>
-      <Field
-        id={ids.agent}
-        label="Coding agent"
-        description="The agent Orca launches for each worker: claude, codex, opencode or another Orca knows."
-      >
-        <TextInput
-          id={ids.agent}
-          value={value.agent}
-          disabled={disabled}
-          onChange={(agent) => set({ agent })}
-        />
-      </Field>
-      <Field id={ids.placement} label="Workspace">
-        <Select
-          id={ids.placement}
-          value={value.placement}
-          options={[
-            { value: "new", label: "A new Orca workspace for each conversation" },
-            { value: "main", label: "The repository's own checkout" },
-          ]}
-          disabled={disabled}
-          onChange={(placement) => set({ placement: placement === "main" ? "main" : "new" })}
-        />
-      </Field>
-      {value.placement === "new" && (
-        <Field id={ids.base} label="Base branch" optional>
-          <TextInput
-            id={ids.base}
-            value={value.baseBranch}
-            disabled={disabled}
-            onChange={(baseBranch) => set({ baseBranch })}
-          />
-        </Field>
-      )}
-      <Field id={ids.model} label="Model" optional description="Empty uses the coding agent's own.">
-        <TextInput id={ids.model} value={value.model} disabled={disabled} onChange={(model) => set({ model })} />
-      </Field>
-      <Field id={ids.effort} label="Effort" optional>
-        <TextInput id={ids.effort} value={value.effort} disabled={disabled} onChange={(effort) => set({ effort })} />
-      </Field>
-      <Field id={ids.scope} label="Conversations">
-        <Select
-          id={ids.scope}
-          value={value.scope}
-          options={[
-            { value: "thread", label: "Each thread is its own worker" },
-            { value: "channel", label: "The whole channel is one worker" },
-          ]}
-          disabled={disabled}
-          onChange={(scope) => set({ scope: scope === "channel" ? "channel" : "thread" })}
-        />
-      </Field>
-      <SettingsGroup layout="rows">
-        <Toggle
-          title="Keep workers open"
-          description="Leave each worker's chat open in Orca after it reports, to watch it or talk to it there."
-          checked={value.keepOpen}
-          disabled={disabled}
-          onChange={(keepOpen) => set({ keepOpen })}
-        />
-      </SettingsGroup>
-      <Instructions
-        value={value.instructions}
+    <SettingsGroup>
+      <ChoiceRow
+        title="Workspace"
+        value={value.placement}
+        choices={PLACEMENTS}
         disabled={disabled}
-        onChange={(instructions) => set({ instructions })}
+        onChange={(placement) => set({ placement: placement === "main" ? "main" : "new" })}
       />
-    </div>
+      {value.placement === "new" && (
+        <ChoiceRow
+          title="Base branch"
+          value={value.baseBranch}
+          choices={baseChoices}
+          loading={refs.state === "loading" && !!value.repo}
+          disabled={disabled}
+          description={refs.state === "error" ? refs.message : undefined}
+          onChange={(baseBranch) => set({ baseBranch })}
+        />
+      )}
+      <ChoiceRow
+        title="Conversations"
+        value={value.scope}
+        choices={SCOPES}
+        disabled={disabled}
+        onChange={(scope) => set({ scope: scope === "channel" ? "channel" : "thread" })}
+      />
+      <Toggle
+        title="Keep workers open"
+        description="Leave each worker open in Orca after it reports."
+        checked={value.keepOpen}
+        disabled={disabled}
+        onChange={(keepOpen) => set({ keepOpen })}
+      />
+    </SettingsGroup>
   );
 }
 
@@ -188,7 +225,7 @@ const STATUS: Readonly<Record<Status, string>> = {
 
 const when = (at: number) => {
   const minutes = Math.round((Date.now() - at) / 60_000);
-  if (minutes < 1) return "just now";
+  if (minutes < 1) return "Just now";
   if (minutes < 60) return `${minutes} min ago`;
   const hours = Math.round(minutes / 60);
   if (hours < 48) return `${hours} h ago`;
@@ -199,71 +236,104 @@ export function createTabs(
   options: Readonly<{ orca: Orca | undefined; runtime: OrcaRuntime }>,
 ) {
   const { orca, runtime } = options;
+  const loadRepos = orca ? (signal: AbortSignal) => orca.repos(signal) : undefined;
+
+  /** Orca's repositories, and the chosen one's branches. */
+  function useOrca(value: Config) {
+    const repos = useRead("repos", loadRepos);
+    const selected = repoSelector(value.repo);
+    const refs = useRead(
+      value.placement === "new" ? selected : "",
+      orca ? (signal) => orca.refs(selected, signal) : undefined,
+    );
+    return { repos, refs };
+  }
+
+  /** Offers Orca's first repository to a config with none. */
+  function useFirstRepo(
+    repos: Read<readonly Repo[]>,
+    value: Config,
+    apply: (next: Config) => void,
+  ) {
+    const first = repos.state === "ready" ? repos.value[0] : undefined;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: once the list arrives.
+    React.useEffect(() => {
+      if (first && !value.repo) apply({ ...value, repo: `id:${first.id}` });
+    }, [first]);
+  }
 
   function Create(props: AgentCreateProps<Config>) {
-    const connection = useOrca(orca);
     const value = config(props.config);
-    const ready = !!repoSelector(value.repo);
+    const { repos, refs } = useOrca(value);
     const { onReadyChange, onChange } = props;
+    const ready = !!repoSelector(value.repo);
     React.useEffect(() => onReadyChange?.(ready), [ready, onReadyChange]);
-    // A new agent starts with Orca's first repository chosen, so creating
-    // one needs no choice at all; the owner can pick another.
-    const first = connection.state === "ready" ? connection.repos[0] : undefined;
-    React.useEffect(() => {
-      if (!value.repo && first)
-        onChange({ ...value, repo: `id:${first.id}` }, { suggested: true });
-    }, [first, value, onChange]);
+    useFirstRepo(repos, value, (next) => onChange(next, { suggested: true }));
+    const part = { value, repos, refs, disabled: props.disabled, onChange: (next: Config) => onChange(next) };
     return (
-      <Fields
-        value={value}
-        connection={connection}
-        disabled={props.disabled}
-        onChange={(next) => onChange(next)}
-      />
+      <div className="grid gap-4">
+        <IdentityRows {...part} />
+        <RuntimeRows {...part} />
+      </div>
     );
   }
 
-  function SettingsTab(props: AgentViewProps<Config>) {
-    const connection = useOrca(orca);
-    const saved = config(props.agent.config);
+  function SettingsTab({
+    agent,
+    save,
+    settingsHost,
+    settingsSection,
+    settingsContent,
+  }: AgentViewProps<Config> & { settingsHost?: AgentSettingsHost }) {
+    const saved = config(agent.config);
     const [draft, setDraft] = React.useState<Config>(saved);
     const [saving, setSaving] = React.useState(false);
-    const [error, setError] = React.useState<string>();
-    const changed = JSON.stringify(draft) !== JSON.stringify(saved);
-    // An agent with no repository (one switched to this type) is offered
-    // Orca's first, so one Save sets it.
-    const first = connection.state === "ready" ? connection.repos[0] : undefined;
-    React.useEffect(() => {
-      if (first) setDraft((value) => (value.repo ? value : { ...value, repo: `id:${first.id}` }));
-    }, [first]);
-    const save = async () => {
+    const [error, setError] = React.useState("");
+    const { repos, refs } = useOrca(draft);
+    useFirstRepo(repos, draft, (next) => setDraft((current) => (current.repo ? current : next)));
+    const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
+    const changed = configChanged || Boolean(settingsHost?.pendingSave);
+    const submit = async () => {
       setSaving(true);
-      setError(undefined);
+      setError("");
       try {
-        await props.save({ ...props.agent.config, ...draft });
-      } catch (failure) {
-        setError(errorText(failure));
+        await save({ ...agent.config, ...draft });
+      } catch (reason) {
+        setError(errorText(reason));
       } finally {
         setSaving(false);
       }
     };
+    const part = { value: draft, repos, refs, disabled: saving, onChange: setDraft };
     return (
-      <div style={{ display: "grid", gap: "var(--space-4)", padding: "var(--space-panel-inset, 16px)" }}>
-        <Fields value={draft} connection={connection} disabled={saving} onChange={setDraft} />
+      <form
+        className="grid gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
         {error && (
-          <p role="alert" className="buzz-field-error m-0">
+          <p role="alert" className="buzz-field-error">
             {error}
           </p>
         )}
-        <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
-          <Button variant="subtle" disabled={!changed || saving} onClick={() => setDraft(saved)}>
-            Reset
-          </Button>
-          <Button variant="prominent" disabled={!changed || saving} onClick={() => void save()}>
-            {saving ? "Saving…" : "Save"}
-          </Button>
-        </div>
-      </div>
+        {settingsSection !== "runtime" && (
+          <>
+            <IdentityRows {...part} typeControl={settingsHost?.typeControl?.(configChanged)} />
+            <Instructions
+              value={draft.instructions}
+              disabled={saving}
+              onChange={(instructions) => setDraft({ ...draft, instructions })}
+            />
+          </>
+        )}
+        {settingsSection !== "identity" && <RuntimeRows {...part} />}
+        <Button type="submit" variant="prominent" disabled={!changed || saving} wide>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        {settingsSection !== "identity" && settingsContent}
+      </form>
     );
   }
 
@@ -276,40 +346,56 @@ export function createTabs(
       read();
       return runtime.subscribe(read);
     }, [props.agent.key]);
-    if (!records.length)
-      return (
-        <p className="m-0 text-body-sm text-subtle" style={{ padding: "var(--space-panel-inset, 16px)" }}>
-          No workers yet. Mention this agent in a channel or a DM to start one in Orca.
-        </p>
-      );
+    const entry = (record: ConversationRecord, index: number, all: readonly ConversationRecord[]) => (
+      <li key={`${record.key}|${record.run}`} style={layout.entry(index === 0, index === all.length - 1)}>
+        <div style={layout.row}>
+          <span style={layout.copy}>
+            <span className="block truncate text-label-sm" title={record.title}>
+              {record.title}
+            </span>
+            <span className="block text-body-sm text-subtle">
+              {[STATUS[record.status], record.where, when(record.updatedAt), record.error]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </span>
+          {props.openConversation && (
+            <Button
+              variant="subtle"
+              size="sm"
+              label={`Open conversation: ${record.title}`}
+              onClick={() => props.openConversation?.(record.channel, record.root)}
+            >
+              Conversation
+            </Button>
+          )}
+          {record.workspace && (
+            <Button
+              variant="subtle"
+              size="sm"
+              label={`Show in Orca: ${record.title}`}
+              onClick={() => void runtime.show(record).catch(() => undefined)}
+            >
+              Show in Orca
+            </Button>
+          )}
+        </div>
+      </li>
+    );
     return (
-      <div style={{ display: "grid", gap: "var(--space-2)", padding: "var(--space-panel-inset, 16px)" }}>
-        <SettingsGroup layout="rows">
-          {records.map((record) => (
-            <PreferenceRow
-              key={`${record.key}|${record.run}`}
-              title={record.title}
-              description={`${STATUS[record.status]} · ${record.where} · ${when(record.updatedAt)}${record.error ? ` · ${record.error}` : ""}`}
-              trailing={
-                <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-                  {props.openConversation && (
-                    <Button
-                      size="sm"
-                      onClick={() => props.openConversation?.(record.channel, record.root)}
-                    >
-                      Conversation
-                    </Button>
-                  )}
-                  {record.workspace && (
-                    <Button size="sm" onClick={() => void runtime.show(record).catch(() => undefined)}>
-                      Show in Orca
-                    </Button>
-                  )}
-                </div>
-              }
-            />
-          ))}
-        </SettingsGroup>
+      <div style={layout.activity}>
+        <section aria-label="Workers" style={layout.section}>
+          <SectionHeader title="Workers" />
+          {records.length ? (
+            <SettingsGroup layout="form">
+              <ul style={layout.list}>{records.map(entry)}</ul>
+            </SettingsGroup>
+          ) : (
+            <p className="m-0 text-body-sm text-subtle">
+              None yet. A worker starts in Orca when the agent is mentioned.
+            </p>
+          )}
+        </section>
       </div>
     );
   }

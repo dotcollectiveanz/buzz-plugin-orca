@@ -126,3 +126,39 @@ describe("Orca CLI", () => {
     expect(calls[0]?.args).toContain("--spec-file");
   });
 });
+
+describe("choices", async () => {
+  const { AGENTS, MODELS } = await import("./catalog");
+  const { fit } = await import("./tabs");
+  it("carries Orca's agents and Claude's models", () => {
+    expect(AGENTS[0]).toEqual({ id: "claude", label: "Claude Code" });
+    expect(AGENTS.map((agent) => agent.id)).toContain("codex");
+    expect(MODELS.claude?.some((model) => model.isDefault)).toBe(true);
+  });
+  it("drops a model or effort the agent does not offer", () => {
+    const claude = MODELS.claude?.find((model) => model.efforts.length)!;
+    const effort = claude.efforts[0]!.id;
+    const kept = fit(config({ agent: "claude", model: claude.id, effort }));
+    expect(kept).toMatchObject({ model: claude.id, effort });
+    expect(fit(config({ agent: "codex", model: claude.id, effort }))).toMatchObject({ model: "", effort: "" });
+    expect(fit(config({ agent: "claude", model: "", effort }))).toMatchObject({ effort: "" });
+    // An agent Orca lists no models for keeps what was typed.
+    expect(fit(config({ agent: "goose", model: "x" }))).toMatchObject({ model: "x" });
+  });
+  it("lists a repository's branches without their ref prefixes", async () => {
+    const { spawn, calls } = fakeOrca(() => ({
+      result: { refs: ["origin/main", "main", "refs/heads/feat/x", "refs/tags/v1", "origin/main"] },
+    }));
+    expect(await new Orca(spawn).refs("id:r")).toEqual(["origin/main", "main", "feat/x", "v1"]);
+    expect(calls[0]?.args.slice(0, 6)).toEqual(["repo", "search-refs", "--repo", "id:r", "--query", "*"]);
+  });
+  it("passes an effort only with a model", async () => {
+    const { spawn, calls } = fakeOrca(() => ({ result: { dispatchId: "d", runId: "r" } }));
+    const orca = new Orca(spawn);
+    const base = { from: "t", run: "r", spec: "s", title: "T", agent: "claude", placement: [] };
+    await orca.workerStart({ ...base, effort: "high" });
+    await orca.workerStart({ ...base, model: "opus", effort: "high" });
+    expect(calls[0]?.args).not.toContain("--effort");
+    expect(calls[1]?.args).toContain("--effort");
+  });
+});

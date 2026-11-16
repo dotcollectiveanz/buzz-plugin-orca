@@ -1,0 +1,71 @@
+# Publishes a GitHub release for each version tag (vX.Y.Z): checks that the tag
+# matches package.json, runs the full check, takes that version's section of
+# CHANGELOG.md as the notes, and attaches the plugin folder as a zip.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Tag matches package.json
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Check
+        run: npm run check
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "## " v " ") == 1 || $0 == "## " v) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+          cat >> notes.md <<NOTES
+
+          ## Install
+
+          In Buzz: **Settings → Plugins → Manage plugins → Add**, then add this repository
+          (\`https://github.com/${GITHUB_REPOSITORY}\`, folder \`plugin\`), or unzip
+          \`buzz-plugin-orca-${GITHUB_REF_NAME}.zip\` and choose **Browse** under "Add from folder".
+          NOTES
+
+      - name: Zip the plugin folder
+        run: |
+          mkdir -p dist
+          (cd plugin && zip -r "../dist/buzz-plugin-orca-${GITHUB_REF_NAME}.zip" .)
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+            gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.zip --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          fi

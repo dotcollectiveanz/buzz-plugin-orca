@@ -39,6 +39,27 @@ describe("plugin.js", () => {
       React.createElement(type!.Create!, { config: agent.config, onChange: () => undefined, disabled: false }),
     );
     expect(create).toContain("Repository");
+    // The host's Harness row is placed in the identity part, or the agent
+    // can't change type.
+    const settings = type!.tabs!.find((tab) => tab.id === "settings")!;
+    const harness = React.createElement("div", null, "HARNESS-ROW");
+    const identity = renderToStaticMarkup(
+      React.createElement(settings.component, {
+        agent,
+        save: async () => undefined,
+        settingsSection: "identity",
+        settingsHost: { typeControl: () => harness },
+      }),
+    );
+    expect(identity).toContain("HARNESS-ROW");
+    expect(identity).toContain("Coding agent");
+    expect(identity).not.toContain("Base branch");
+    const runtimePart = renderToStaticMarkup(
+      React.createElement(settings.component, { agent, save: async () => undefined, settingsSection: "runtime" }),
+    );
+    expect(runtimePart).toContain("Base branch");
+    expect(runtimePart).not.toContain("HARNESS-ROW");
+    expect(settings.splitSettings).toBe(true);
     for (const tab of type!.tabs!) {
       const html = renderToStaticMarkup(React.createElement(tab.component, { agent, save: async () => undefined }));
       expect(html.length).toBeGreaterThan(0);
