@@ -7,7 +7,13 @@ import { OrcaIcon } from "./icon";
 import { Orca } from "./orca";
 import { setReact } from "./react";
 import { OrcaRuntime } from "./runtime";
-import { type Config, DEFAULT_CONFIG, summary } from "./settings";
+import {
+  type Config,
+  DEFAULT_CONFIG,
+  summary,
+  syncedSettingsSchema,
+  withSyncedSettings,
+} from "./settings";
 import { createTabs } from "./tabs";
 
 export const TYPE_ID = "orca";
@@ -41,6 +47,7 @@ export function apply(ctx: Context) {
     }),
     ...(runtime && { run: (delivery) => runtime.run(delivery) }),
     timeoutMs: HANDOVER_MS,
+    syncedSettings: { schema: syncedSettingsSchema, withSynced: withSyncedSettings },
     resumes: true,
   };
   agents.register<Config>(type);

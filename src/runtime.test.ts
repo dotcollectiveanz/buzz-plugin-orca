@@ -13,6 +13,7 @@ function orcaWith(mail: Answer[], extra: (args: string[]) => Answer | undefined 
     if (found) return found;
     const [a, b] = args;
     if (a === "repo" && b === "show") return { result: { repo: REPO } };
+    if (a === "repo" && b === "list") return { result: { repos: [REPO] } };
     if (a === "terminal" && b === "create") return { result: { terminal: { handle: "term_mail" } } };
     if (a === "terminal" && b === "show") return { result: { terminal: { status: "running" } } };
     if (b === "run-create") return { result: { runId: "run_1" } };
@@ -143,16 +144,29 @@ describe("OrcaRuntime", () => {
     expect(posted).toHaveLength(0);
   });
 
-  it("asks for a repository before starting anything", async () => {
-    const { spawn, calls } = orcaWith([]);
+  it("uses Orca's first repository when none is set, and says so", async () => {
+    const { spawn, calls } = orcaWith([{ result: { messages: [{ id: "m", type: "worker_done", body: "ok" }] } }]);
     const { kit, posted } = fakeKit(THREAD);
     const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
     const { delivery, working } = mention("do a thing", { agent: "claude" });
     await runtime.run(delivery);
-    await expect(working[0]).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/repository/) });
-    expect(calls).toHaveLength(0);
+    await Promise.all(working);
+    expect(calls.some((call) => call.args[0] === "repo" && call.args[1] === "show")).toBe(false);
+    expect(flag(calls.find((call) => call.args[1] === "worker-start")!.args, "--repo")).toBe("id:repo-1");
+    expect(posted[0]?.text).toContain("No repository is set for this agent, so I used shop");
+  });
+
+  it("says when Orca has no repositories", async () => {
+    const { spawn } = orcaWith([], (args) =>
+      args[0] === "repo" && args[1] === "list" ? { result: { repos: [] } } : undefined,
+    );
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("do a thing", { agent: "claude" });
+    await runtime.run(delivery);
+    await expect(working[0]).resolves.toMatchObject({ ok: false });
     expect(posted[0]).toMatchObject({ notifyOwner: true });
-    expect(posted[0]?.text).toContain("Choose the Orca repository");
+    expect(posted[0]?.text).toContain("Orca has no repositories");
   });
 
   it("uses the repository's checkout when placement is main", async () => {

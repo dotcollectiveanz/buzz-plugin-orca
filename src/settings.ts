@@ -77,3 +77,31 @@ export const summary = (value: unknown) => {
   const where = repo ? repoSelector(repo).replace(/^(name|path|id):/, "") : "no repo";
   return `${agent} · ${where}${placement === "new" ? " · new workspaces" : ""}`;
 };
+
+// Synced settings (NIP-AP `buzz.agent.settings`). An agent whose settings
+// sync through its community can't start or save on a type without them, so
+// the type must declare them. Buzz requires every synced value to be text and
+// refuses unknown keys. The repository, base branch and keep-open choice stay
+// on this device: a repository is this computer's Orca's.
+type SettingsSchema = Readonly<Record<string, "string" | readonly string[]>>;
+export const syncedSettingsSchema = {
+  agent: "string",
+  placement: ["new", "main"],
+  scope: ["thread", "channel"],
+  model: "string",
+  effort: "string",
+} as const satisfies SettingsSchema;
+
+const pick = (value: object) =>
+  Object.fromEntries(
+    Object.keys(syncedSettingsSchema)
+      .filter((name) => name in value)
+      .map((name) => [name, (value as Record<string, unknown>)[name]]),
+  ) as Record<string, string>;
+
+/** Synced fields come only from `settings`, a left-out one from the default;
+ * everything else stays this device's. */
+export const withSyncedSettings = (
+  value: Config,
+  settings: Readonly<Record<string, string>>,
+): Config => config({ ...value, ...pick(DEFAULT_CONFIG), ...pick(settings) });

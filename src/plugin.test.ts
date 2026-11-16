@@ -31,6 +31,8 @@ describe("plugin.js", () => {
     expect(type?.id).toBe("orca");
     expect(type?.title).toBe("Orca");
     expect(typeof type?.run).toBe("function");
+    // An agent whose settings sync can't save or start on a type without these.
+    expect(Object.keys(type?.syncedSettings?.schema ?? {}).sort()).toEqual(["agent", "effort", "model", "placement", "scope"]);
     expect(type?.tabs?.map((tab) => tab.id)).toEqual(["settings", "activity"]);
     const agent = { key: "k", pubkey: "p", name: "Orca", type: "orca/orca", owner: "o", relay: "r", config: type!.defaults().config };
     const create = renderToStaticMarkup(

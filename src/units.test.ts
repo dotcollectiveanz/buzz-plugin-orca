@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fakeOrca } from "./fake";
 import { envelope, MISSING, Orca, OrcaError } from "./orca";
-import { config, repoSelector, summary } from "./settings";
+import { config, DEFAULT_CONFIG, repoSelector, summary, syncedSettingsSchema, withSyncedSettings } from "./settings";
 import { messageText, placementArgs, taskTitle, workerSpec, workspaceName } from "./spec";
 
 describe("settings", () => {
@@ -21,6 +21,31 @@ describe("settings", () => {
     expect(repoSelector("~/code/shop")).toBe("path:~/code/shop");
     expect(repoSelector("id:abc")).toBe("id:abc");
     expect(summary({ repo: "shop", agent: "codex", placement: "main" })).toBe("codex · shop");
+  });
+});
+
+describe("synced settings", () => {
+  // Buzz's own check (agent-config.ts settingsProblem): known keys, text
+  // values, and a value from the set where the rule is a set.
+  const problem = (value: Record<string, unknown>) => {
+    for (const [name, setting] of Object.entries(value)) {
+      const rule = (syncedSettingsSchema as Record<string, "string" | readonly string[]>)[name];
+      if (!rule) return `Unknown setting "${name}"`;
+      if (typeof setting !== "string") return `Setting "${name}" is not text`;
+      if (Array.isArray(rule) && !rule.includes(setting)) return `Setting "${name}" has an unsupported value`;
+    }
+    return undefined;
+  };
+  const published = (value: object) =>
+    Object.fromEntries(Object.keys(syncedSettingsSchema).filter((name) => name in value).map((name) => [name, (value as Record<string, unknown>)[name]]));
+  it("publishes only text Buzz accepts", () => {
+    expect(problem(published(DEFAULT_CONFIG))).toBeUndefined();
+    expect(problem(published(config({ placement: "main", scope: "channel", model: "opus", agent: "codex" })))).toBeUndefined();
+  });
+  it("keeps device settings and takes synced ones from the community", () => {
+    const local = config({ repo: "id:r1", baseBranch: "dev", keepOpen: false, agent: "claude", model: "x" });
+    const merged = withSyncedSettings(local, { agent: "codex", placement: "main" });
+    expect(merged).toMatchObject({ repo: "id:r1", baseBranch: "dev", keepOpen: false, agent: "codex", placement: "main", model: "" });
   });
 });
 

@@ -129,6 +129,13 @@ export type AgentType<Config = unknown> = {
   Create?: ComponentType<AgentCreateProps<Config>>;
   tabs?: readonly AgentTab<Config>[];
   run?(delivery: Delivery<Config>): void | Promise<void>;
+  /** The settings that sync across devices and how they merge into this
+   * device's config. An agent whose settings sync can't start or save on a
+   * type without them. */
+  syncedSettings?: Readonly<{
+    schema: Readonly<Record<string, "string" | readonly string[]>>;
+    withSynced(config: Config, settings: Readonly<Record<string, string>>): Config;
+  }>;
   /** Per-run deadline in milliseconds, up to 30 minutes. */
   timeoutMs?: number;
   resumes?: boolean;

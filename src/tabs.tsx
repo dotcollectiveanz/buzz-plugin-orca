@@ -230,6 +230,12 @@ export function createTabs(
     const [saving, setSaving] = React.useState(false);
     const [error, setError] = React.useState<string>();
     const changed = JSON.stringify(draft) !== JSON.stringify(saved);
+    // An agent with no repository (one switched to this type) is offered
+    // Orca's first, so one Save sets it.
+    const first = connection.state === "ready" ? connection.repos[0] : undefined;
+    React.useEffect(() => {
+      if (first) setDraft((value) => (value.repo ? value : { ...value, repo: `id:${first.id}` }));
+    }, [first]);
     const save = async () => {
       setSaving(true);
       setError(undefined);

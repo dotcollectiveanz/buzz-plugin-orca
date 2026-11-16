@@ -268,13 +268,21 @@ export class OrcaRuntime {
     request: string,
     eventId: string,
   ) {
-    const selector = repoSelector(settings.repo);
-    if (!selector)
-      throw new Error("Choose the Orca repository in this agent's Settings first.");
     if (!request) throw new Error("The message has no request in it.");
     const signal = this.lifetime.signal;
     delivery.step?.("orca", "repository");
-    const repo = await this.orca.repo(selector, signal);
+    // With no repository chosen (an agent switched to this type keeps none),
+    // the agent uses Orca's first one and says so, rather than refusing.
+    const selector = repoSelector(settings.repo);
+    let chosen = "";
+    let repo: Repo;
+    if (selector) repo = await this.orca.repo(selector, signal);
+    else {
+      const [first] = await this.orca.repos(signal);
+      if (!first) throw new Error("Orca has no repositories. Add one in Orca, then try again.");
+      repo = first;
+      chosen = ` No repository is set for this agent, so I used ${first.displayName || first.path}: choose another in its Settings.`;
+    }
     const mailbox = await this.mailbox(repo, signal);
     const title = taskTitle(request);
     const run = await this.orca.runCreate(mailbox, `Buzz: ${title}`, signal);
@@ -319,7 +327,7 @@ export class OrcaRuntime {
     });
     const place =
       settings.placement === "new" ? `a new Orca workspace, \`${name}\`` : `\`${repo.displayName || repo.path}\` in Orca`;
-    await this.say(id, `On it: ${settings.agent} is working in ${place}.`);
+    await this.say(id, `On it: ${settings.agent} is working in ${place}.${chosen}`);
   }
 
   /** The repository's mailbox terminal, made again when it has gone. */
