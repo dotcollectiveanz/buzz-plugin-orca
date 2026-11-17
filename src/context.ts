@@ -1,6 +1,7 @@
 // The Buzz conversation a worker hasn't seen yet, read as the agent, as Buzz's
 // own harnesses show a session the thread's messages since its last turn.
 import type { AgentHandle, HarnessConversation, RelayEvent } from "./buzz";
+import { type MediaFile, type MediaRef, mediaLines, mediaRefs, withoutMediaLinks } from "./media";
 import { messageText } from "./spec";
 
 /** Chat message kinds: channel messages and DM messages. */
@@ -16,6 +17,8 @@ export type ContextMessage = Readonly<{
   author: string;
   createdAt: number;
   text: string;
+  /** The files it attaches. */
+  files: readonly MediaRef[];
 }>;
 
 export type Conversation = Readonly<{
@@ -24,6 +27,10 @@ export type Conversation = Readonly<{
   messages: readonly ContextMessage[];
   /** Who sent the triggering message. */
   from: string;
+  /** The triggering message's text, without links to its files. */
+  request: string;
+  /** The files the triggering message attaches. */
+  requestFiles: readonly MediaRef[];
   /** The newest message time read, for the next turn's `since`. */
   latest: number;
 }>;
@@ -93,26 +100,38 @@ export async function readConversation(
   const named = await names(agent, [...new Set([event.pubkey, ...messages.map((item) => item.pubkey)])]);
   const nameOf = (pubkey: string) =>
     named.get(pubkey) ?? (pubkey === agent.owner ? "the owner" : `${pubkey.slice(0, 8)}…`);
+  const requestFiles = mediaRefs(event);
   return {
     messages: messages
-      .map((item) => ({
-        id: item.id,
-        author: nameOf(item.pubkey),
-        createdAt: item.created_at,
-        text: messageText(item.content).slice(0, CONTENT_LIMIT),
-      }))
-      .filter((item) => item.text),
+      .map((item) => {
+        const files = mediaRefs(item);
+        return {
+          id: item.id,
+          author: nameOf(item.pubkey),
+          createdAt: item.created_at,
+          text: withoutMediaLinks(messageText(item.content), files).slice(0, CONTENT_LIMIT),
+          files,
+        };
+      })
+      .filter((item) => item.text || item.files.length),
     from: nameOf(event.pubkey),
+    request: withoutMediaLinks(messageText(event.content), requestFiles),
+    requestFiles,
     latest: Math.max(event.created_at, ...messages.map((item) => item.created_at)),
   };
 }
 
-/** The messages as a worker reads them: one line of author and time each. */
-export function contextText(messages: readonly ContextMessage[]) {
+/** The messages as a worker reads them: one line of author and time each,
+ * and a line for each file, saved in `files`. */
+export function contextText(
+  messages: readonly ContextMessage[],
+  files: ReadonlyMap<string, MediaFile> = new Map(),
+) {
   return messages
     .map((item) => {
       const at = new Date(item.createdAt * 1000).toISOString().slice(0, 16).replace("T", " ");
-      return `- ${item.author} (${at} UTC): ${item.text.replace(/\n/g, "\n  ")}`;
+      const attached = mediaLines(item.files, files).map((line) => `\n  Attached: ${line}`);
+      return `- ${item.author} (${at} UTC): ${(item.text || "(no text)").replace(/\n/g, "\n  ")}${attached.join("")}`;
     })
     .join("\n");
 }

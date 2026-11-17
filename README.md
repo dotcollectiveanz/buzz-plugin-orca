@@ -17,7 +17,8 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
   supervised Orca worker, in a new Orca workspace or in the repository's own checkout.
 - **Follow-ups go to the same worker.** Another message in the thread reaches the worker as a
   follow-up Task, even while it is still busy.
-- **Files come back too.** A worker can attach screenshots, images, videos and PDFs from its
+- **Files both ways.** Files people attach in the conversation reach the worker: it is told where
+  each is saved on this computer. A worker can attach screenshots, images, videos and PDFs from its
   workspace to its messages. They are posted with the message, as Buzz's own agents attach files.
 - **Questions come to you.** When the worker needs a decision, it asks. The question is posted in
   the thread and tags you. Your next message in the thread is its answer.
@@ -64,7 +65,9 @@ The plugin is an Orca orchestration coordinator. For each conversation it:
    nothing typed into it does anything;
 2. creates a Run from that mailbox (`orca orchestration run-create --from <mailbox>`);
 3. starts a worker with the request as its Task (`orca orchestration worker-start --spec-file -`),
-   with the conversation's earlier messages, read as the agent, and how to post back;
+   with the conversation's earlier messages, read as the agent, and how to post back. Files attached
+   to those messages are saved as the agent (in the system's temp folder, as Buzz's own agents save
+   them) and the worker is told where;
 4. waits for the Run's mail (`orca orchestration check --terminal <mailbox> --wait`) and posts each
    `status` message (the worker's messages while it works) to the conversation, then the
    `worker_done` reply, a `question` or an `escalation`, which end the turn. Files the worker names

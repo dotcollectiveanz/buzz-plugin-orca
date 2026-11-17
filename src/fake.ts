@@ -156,6 +156,28 @@ export function chat(id: string, pubkey: string, at: number, content: string): R
   return { id, pubkey, created_at: at, kind: 9, content, tags: [] };
 }
 
+/** The tags and Markdown Buzz's composer gives an attached file. */
+export function attached(name: string, type = "image/png", size = 2048) {
+  const url = `https://media.example/${name.length.toString(16).padStart(64, "0")}.png`;
+  return {
+    url,
+    markdown: `![${name}](<${url}>)`,
+    tag: ["imeta", `url ${url}`, `m ${type}`, `x ${"0".repeat(64)}`, `size ${size}`, `filename ${name}`],
+  };
+}
+
+/** The agent's `media`: saves a file by its URL in the temp folder, or fails
+ * for the URLs in `fail` with their message. Records what it was asked. */
+export function fakeMedia(fail: Record<string, string> = {}) {
+  const asked: string[] = [];
+  const media: NonNullable<AgentHandle["media"]> = async (url) => {
+    asked.push(url);
+    if (fail[url]) throw new Error(fail[url]);
+    return { path: `/tmp/buzz-agent-media/${url.split("/").pop()}`, type: "image/png", size: 2048 };
+  };
+  return { media, asked };
+}
+
 /** A profile on the fake relay. */
 export function profile(pubkey: string, name: string): RelayEvent {
   return { id: `p-${pubkey}`, pubkey, created_at: 1, kind: 0, content: JSON.stringify({ display_name: name }), tags: [] };
@@ -172,7 +194,7 @@ export const THREAD: HarnessConversation = {
 export function mention(
   content: string,
   config: unknown,
-  extra: Partial<{ resumed: true; id: string; at: number }> = {},
+  extra: Partial<{ resumed: true; id: string; at: number; tags: string[][] }> = {},
 ) {
   const working: PromiseLike<unknown>[] = [];
   const delivery: Delivery<unknown> = {
@@ -184,7 +206,7 @@ export function mention(
         created_at: extra.at ?? 1_000,
         kind: 9,
         content,
-        tags: [],
+        tags: extra.tags ?? [],
       },
       ...(extra.resumed && { resumed: true as const }),
     },

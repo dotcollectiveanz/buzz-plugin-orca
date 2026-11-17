@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 (17 Nov 2026)
+
+- **Files you send reach the worker.** Images, PDFs and other files attached in the conversation
+  (in the message that mentions the agent, or ones the worker hasn't seen yet) are saved on this
+  computer as the agent, as Buzz's Claude agent saves them, and the worker is told where each is,
+  instead of a link it can't open. A message of only files starts a worker too.
+- **Bounded.** Up to 10 files a turn, newest first, none over 100 MB, within the hand-over's time.
+  A file that isn't saved is still named to the worker, with why.
+
 ## 0.5.0 (17 Nov 2026)
 
 - **Workers can send files back.** A worker attaches screenshots, images, videos (MP4, MOV) and PDFs

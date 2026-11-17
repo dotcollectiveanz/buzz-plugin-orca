@@ -24,12 +24,12 @@ import {
   workspaceDir,
 } from "./attachments";
 import { launchChoice } from "./choices";
-import { contextText, readConversation } from "./context";
+import { type Conversation, contextText, readConversation } from "./context";
+import { attachedText, saveMedia } from "./media";
 import { type Message, type Orca, OrcaError, type Repo } from "./orca";
 import { type Config, config, repoSelector } from "./settings";
 import {
   followUpText,
-  messageText,
   placementArgs,
   questionText,
   reportText,
@@ -227,7 +227,6 @@ export class OrcaRuntime {
   ) {
     const existing = this.record(id);
     const open = existing && (existing.status === "working" || existing.status === "question");
-    const request = messageText(event.content);
     try {
       if (existing && resumed && open) {
         // The app closed while this turn was working: keep waiting for it.
@@ -236,7 +235,7 @@ export class OrcaRuntime {
       // What was said since the worker last heard from the conversation, as
       // Buzz's own harnesses show a session the messages it hasn't seen.
       const said = await readConversation(delivery.agent, conversation, event, existing?.seen ?? 0);
-      const context = contextText(said.messages);
+      const { request, context } = await this.shown(delivery, said);
       if (existing?.status === "question" && existing.question) {
         delivery.step?.("orca", "answer");
         await this.orca.reply(
@@ -271,10 +270,11 @@ export class OrcaRuntime {
           );
           // A new worker is shown the whole conversation.
           const all = await readConversation(delivery.agent, conversation, event, 0);
-          await this.start(id, delivery, settings, conversation, event, request, all.from, contextText(all.messages), all.latest);
+          const shown = await this.shown(delivery, all);
+          await this.start(id, delivery, settings, conversation, event, shown.request, all.from, shown.context, all.latest, all.request);
         }
       } else {
-        await this.start(id, delivery, settings, conversation, event, request, said.from, context, said.latest);
+        await this.start(id, delivery, settings, conversation, event, request, said.from, context, said.latest, said.request);
       }
       const record = this.record(id);
       if (record) delivery.named?.(record.title);
@@ -284,6 +284,18 @@ export class OrcaRuntime {
       await this.say(id, `I couldn't hand this to Orca. ${message}`, true);
       throw error;
     }
+  }
+
+  /** What the worker is shown of `said`: the request and the conversation,
+   * with the files they attach saved where the worker can open them. */
+  private async shown(delivery: Delivery<unknown>, said: Conversation) {
+    const groups = [said.requestFiles, ...[...said.messages].reverse().map((item) => item.files)];
+    if (groups.some((group) => group.length)) delivery.step?.("orca", "files");
+    const files = await saveMedia(delivery.agent, groups);
+    return {
+      request: [said.request, attachedText(said.requestFiles, files)].filter(Boolean).join("\n\n"),
+      context: contextText(said.messages, files),
+    };
   }
 
   private async start(
@@ -296,6 +308,8 @@ export class OrcaRuntime {
     from: string,
     context: string,
     seen: number,
+    /** The request's own words, for its title. */
+    text: string,
   ) {
     if (!request) throw new Error("The message has no request in it.");
     const signal = this.lifetime.signal;
@@ -313,7 +327,7 @@ export class OrcaRuntime {
       fallback = true;
     }
     const mailbox = await this.mailbox(repo, signal);
-    const title = taskTitle(request);
+    const title = taskTitle(text || "Files from Buzz");
     const run = await this.orca.runCreate(mailbox, `Buzz: ${title}`, signal);
     const name = workspaceName(title, conversation.root ?? event.id);
     delivery.step?.("orca", "worker");

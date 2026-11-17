@@ -1,7 +1,8 @@
 // The parts of Buzz's plugin API (`@buzz/author`) this plugin uses, as types
 // only. Buzz supplies every capability at runtime through `ctx`; nothing here
 // is imported at runtime. Copied from block/buzz-app v0.7.0-preview.260.1
-// (`src/features/agents/service.ts`, `src/features/agent-harness/kit.ts`,
+// (`src/features/agents/service.ts`, `src/features/agents/native.ts`,
+// `src/features/agent-harness/kit.ts`,
 // `src/features/host/service.ts`) and trimmed to what this plugin calls. See
 // NOTICE.md. Keep it in step with the Buzz release in `BUZZ_REF`
 // (scripts/types.mjs) when the API changes.
@@ -36,6 +37,19 @@ export type AgentHandle = Readonly<{
   publish(event: AgentEventTemplate, check?: () => void): Promise<RelayEvent>;
   /** Reads the community as the agent, seeing only what it may see. */
   query(filters: readonly object[]): Promise<RelayEvent[]>;
+  /** Saves one of its community's media blobs, of any type, by URL or
+   * `sha256[.ext]`, to a local file for the agent. Optional here: the
+   * plugin names files without saving them where it is missing. */
+  media?(url: string): Promise<AgentMedia>;
+}>;
+
+/** A community media blob saved to a local file for the agent; `data`
+ * (base64) is the image itself when the agent can be shown it. */
+export type AgentMedia = Readonly<{
+  path: string;
+  type: string;
+  size: number;
+  data?: string;
 }>;
 
 export type Trigger =

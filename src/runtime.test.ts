@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { beforeEach } from "vitest";
-import { type Answer, chat, fakeFiles, fakeKit, fakeOrca, memoryStorage, mention, PNG, profile, relay, TEXT, THREAD } from "./fake";
+import { type Answer, attached, chat, fakeFiles, fakeKit, fakeMedia, fakeOrca, memoryStorage, mention, PNG, profile, relay, TEXT, THREAD } from "./fake";
 import { Orca } from "./orca";
 import { MAILBOXES_KEY, OrcaRuntime } from "./runtime";
 
@@ -396,5 +396,65 @@ describe("attachments", () => {
     });
     expect(sent[0]!.args.text).toContain("**The Orca worker asks:**\n\nWhich one?");
     expect(runtime.records()[0]?.status).toBe("question");
+  });
+});
+
+describe("files from Buzz", () => {
+  beforeEach(() => {
+    relay.events = [];
+    relay.queries = [];
+  });
+
+  const done = { result: { messages: [{ id: "m", type: "worker_done", body: "ok" }] } };
+
+  it("saves the request's files and the unseen messages' and tells a new worker where they are", async () => {
+    const mockup = attached("mockup.png");
+    const shot = attached("cart-bug.png");
+    relay.events = [{ ...chat(THREAD.root!, "annpub", 900, `The cart is broken\n${shot.markdown}`), tags: [shot.tag] }];
+    const { media, asked } = fakeMedia();
+    const { spawn, calls } = orcaWith([done]);
+    const runtime = new OrcaRuntime(fakeKit(THREAD).kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention(`Make it match this\n${mockup.markdown}`, CONFIG, { tags: [mockup.tag] });
+    const steps: string[] = [];
+    await runtime.run({ ...delivery, agent: { ...delivery.agent, media }, step: (_tool, target) => steps.push(target ?? "") });
+    await Promise.all(working);
+    expect(asked).toEqual([mockup.url, shot.url]);
+    expect(steps).toContain("files");
+    const start = calls.find((call) => call.args[1] === "worker-start")!;
+    expect(flag(start.args, "--task-title")).toBe("Make it match this");
+    expect(start.input).toContain(
+      "Make it match this\n\nFiles attached to this message (open them from where they are saved; they are only on this computer):\n- `mockup.png` (image/png, 2 KB), saved at /tmp/buzz-agent-media/",
+    );
+    expect(start.input).toContain("The cart is broken\n  Attached: `cart-bug.png` (image/png, 2 KB), saved at /tmp/buzz-agent-media/");
+    expect(start.input).not.toContain("https://media.example");
+  });
+
+  it("starts a worker from files with no text", async () => {
+    const shot = attached("only.png");
+    const { media } = fakeMedia();
+    const { spawn, calls } = orcaWith([done]);
+    const runtime = new OrcaRuntime(fakeKit(THREAD).kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention(`nostr:npub1agent ${shot.markdown}`, CONFIG, { tags: [shot.tag] });
+    await runtime.run({ ...delivery, agent: { ...delivery.agent, media } });
+    await Promise.all(working);
+    const start = calls.find((call) => call.args[1] === "worker-start")!;
+    expect(flag(start.args, "--task-title")).toBe("Files from Buzz");
+    expect(start.input).toContain("`only.png` (image/png, 2 KB), saved at");
+  });
+
+  it("sends a follow-up its files, and names ones it couldn't fetch", async () => {
+    const shot = attached("second.png");
+    const { media } = fakeMedia({ [shot.url]: "The community refused the media: 403" });
+    const { spawn, calls } = orcaWith([done, done]);
+    const runtime = new OrcaRuntime(fakeKit(THREAD).kit, new Orca(spawn), memoryStorage());
+    const first = mention("first", CONFIG, { id: "a".repeat(64), at: 1_000 });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    const second = mention(`and this\n${shot.markdown}`, CONFIG, { id: "b".repeat(64), at: 2_000, tags: [shot.tag] });
+    await runtime.run({ ...second.delivery, agent: { ...second.delivery.agent, media } });
+    await Promise.all(second.working);
+    const body = flag(calls.find((call) => call.args[1] === "send")!.args, "--body");
+    expect(body).toContain("New message from the owner:\n\nand this\n\nFiles attached to this message");
+    expect(body).toContain("`second.png` (image/png, 2 KB), not available: The community refused the media: 403");
   });
 });
