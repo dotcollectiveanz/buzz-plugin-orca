@@ -56,6 +56,7 @@ export const RELAY = [
   "You are the Buzz agent in this conversation: whatever you post appears in Buzz as its message, so write as you would reply in chat. Your messages go only to this conversation.",
   "- To post a message while you work (a progress note, a partial result, a link to look at), run `orca orchestration send --type status --subject \"<a few words>\" --body \"<the message>\"`. Post when it helps the person; not for every step.",
   "- Your `worker_done` report is your reply for this turn: write it for the person who asked, with what you did, the outcome and its evidence, and anything open. Markdown is fine.",
+  "- To attach files to any of these messages (a screenshot, an image, a video, a PDF), add a line `Attach: <path>` to its body for each, up to 10, with the path inside your workspace (relative to it, or absolute). Save or copy a file into your workspace first. Images, videos (MP4, MOV) and PDFs only. The lines are taken out and the files posted with the message.",
   "- If you need a decision or information only they have, `ask` the coordinator and end your turn. Your question is posted to them, and their answer comes back to you.",
   "- New messages in the conversation reach you as follow-up Tasks, with what was said since your last message.",
 ].join("\n");

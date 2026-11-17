@@ -23,7 +23,9 @@ check("manifest runs only the orca locator", processes.length === 1 && orca.id =
 const locator = orca?.args?.[1] ?? "";
 check("the locator finds Orca.app and answers when it is missing", /\/Applications\/Orca\.app/.test(locator) && /Contents\/Resources\/bin\/orca/.test(locator) && /orca_not_installed/.test(locator) && /exec "\$o" "\$@"/.test(locator));
 check("the locator fits Buzz's 1024-byte argument limit", Buffer.byteLength(locator) <= 1024, `${Buffer.byteLength(locator)} bytes`);
-check("manifest asks for nothing else", Object.keys(host).join(",") === "processes", Object.keys(host).join(","));
+// `files` reads what workers attach (host.readFile, host.resolveDirectory).
+check("manifest asks for files", host.files === true, JSON.stringify(host.files));
+check("manifest asks for nothing else", Object.keys(host).sort().join(",") === "files,processes", Object.keys(host).join(","));
 
 // Buzz rejects the folder if the icon breaks its limits: PNG, at most 1 MiB,
 // 4096 px a side and 1,048,576 px in all.

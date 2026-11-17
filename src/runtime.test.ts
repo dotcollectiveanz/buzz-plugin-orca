@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { beforeEach } from "vitest";
-import { type Answer, chat, fakeKit, fakeOrca, memoryStorage, mention, profile, relay, THREAD } from "./fake";
+import { type Answer, chat, fakeFiles, fakeKit, fakeOrca, memoryStorage, mention, PNG, profile, relay, TEXT, THREAD } from "./fake";
 import { Orca } from "./orca";
 import { MAILBOXES_KEY, OrcaRuntime } from "./runtime";
 
@@ -296,5 +296,105 @@ describe("OrcaRuntime", () => {
     expect(calls.some((call) => call.args[1] === "worker-stop" && flag(call.args, "--dispatch") === "ctx_1")).toBe(true);
     expect(posted.at(-1)?.text).toBe("Stopped the Orca worker.");
     expect(runtime.records()[0]?.status).toBe("stopped");
+  });
+});
+
+describe("attachments", () => {
+  beforeEach(() => {
+    relay.events = [];
+    relay.queries = [];
+  });
+
+  const FILES = { "/code/shop-wt/shots/home.png": PNG, "/code/shop-wt/shots/cart.png": PNG, "/code/shop-wt/.env": TEXT };
+  const done = (body: string, type = "worker_done") => ({ result: { messages: [{ id: "m", type, subject: "Done", body }] } });
+
+  async function turn(
+    mail: Answer[],
+    options: Readonly<{ files?: boolean; tools?: boolean; refuse?: string; conversation?: typeof THREAD }> = {},
+  ) {
+    const { spawn, calls } = orcaWith(mail);
+    const { kit, posted, sent } = fakeKit(options.conversation ?? THREAD, options);
+    const files = options.files === false ? undefined : fakeFiles(FILES);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage(), Date.now, files);
+    const { delivery, working } = mention("show me the cart", CONFIG);
+    await runtime.run(delivery);
+    await Promise.all(working);
+    return { posted, sent, calls, runtime };
+  }
+
+  it("tells the worker how to attach files", async () => {
+    const { calls } = await turn([done("ok")]);
+    expect(calls.find((call) => call.args[1] === "worker-start")!.input).toContain("Attach: <path>");
+  });
+
+  it("posts the worker's files with its reply through Buzz's send", async () => {
+    const { posted, sent, runtime } = await turn([
+      done("Here is the cart, @ann.\nAttach: shots/home.png\nAttach: /code/shop-wt/shots/cart.png"),
+    ]);
+    expect(posted).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.args).toEqual({
+      text: "Here is the cart, \\@ann.",
+      files: ["0/home.png", "1/cart.png"],
+      audience: "everyone",
+    });
+    expect(sent[0]!.files["0/home.png"]).toBe(PNG);
+    expect(sent[0]!.conversation).toBe(THREAD.key);
+    expect(runtime.records()[0]?.status).toBe("done");
+  });
+
+  it("posts files from status messages as the worker works", async () => {
+    const { posted, sent } = await turn([
+      { result: { messages: [{ id: "s", type: "status", subject: "Screenshot", body: "Attach: shots/home.png" }] } },
+      done("All done."),
+    ]);
+    expect(sent.map((item) => item.args)).toEqual([
+      { text: "Screenshot", files: ["0/home.png"], audience: "everyone" },
+    ]);
+    expect(posted.map((item) => item.text)).toEqual(["All done."]);
+  });
+
+  it("attaches what it may and notes the rest", async () => {
+    const { posted, sent } = await turn([done("Report.\nAttach: shots/home.png\nAttach: .env\nAttach: ../../etc/passwd")]);
+    expect(posted).toEqual([]);
+    expect(sent[0]!.args.files).toEqual(["0/home.png"]);
+    expect(sent[0]!.args.text).toBe(
+      "Report.\n\n_Some files couldn't be attached:_\n- `.env`: only images, videos and PDFs are attached\n- `../../etc/passwd`: it is outside the worker's workspace",
+    );
+  });
+
+  it("posts text with a note when no file can be attached", async () => {
+    const { posted, sent } = await turn([done("Report.\nAttach: shots/none.png")]);
+    expect(sent).toEqual([]);
+    expect(posted.map((item) => item.text)).toEqual([
+      "Report.\n\n_A file couldn't be attached:_\n- `shots/none.png`: there is no such file",
+    ]);
+  });
+
+  it("falls back to text when Buzz refuses the message", async () => {
+    const { posted, sent } = await turn([done("Report.\nAttach: shots/home.png")], { refuse: "Upload failed: too large" });
+    expect(sent).toEqual([]);
+    expect(posted.map((item) => item.text)).toEqual([
+      "Report.\n\n_A file couldn't be attached:_\n- `shots/home.png`: Upload failed: too large",
+    ]);
+  });
+
+  it("says so on a Buzz without file access or tools", async () => {
+    for (const options of [{ files: false }, { tools: false }]) {
+      const { posted } = await turn([done("Report.\nAttach: shots/home.png")], options);
+      expect(posted[0]?.text).toContain("`shots/home.png`: this version of Buzz can't attach files");
+    }
+  });
+
+  it("tags the owner on a question with files, and replies in the mention's thread outside a thread", async () => {
+    const channel = { key: "chan", channel: "chan", topLevel: false, where: "#builds" };
+    const { sent, runtime } = await turn([done("Which one?\nAttach: shots/home.png", "question")], { conversation: channel });
+    expect(sent[0]!.args).toMatchObject({
+      files: ["0/home.png"],
+      reply: "e".repeat(64),
+      mentions: ["ownerpub"],
+    });
+    expect(sent[0]!.args.text).toContain("**The Orca worker asks:**\n\nWhich one?");
+    expect(runtime.records()[0]?.status).toBe("question");
   });
 });

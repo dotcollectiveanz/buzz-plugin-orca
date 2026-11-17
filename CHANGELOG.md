@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 (17 Nov 2026)
+
+- **Workers can send files back.** A worker attaches screenshots, images, videos (MP4, MOV) and PDFs
+  to its messages, its reply or a question with an `Attach: <path>` line for each. They are posted
+  with the message through Buzz's own `send` tool, as Buzz's Claude agent attaches files, so they
+  show inline in the thread.
+- **Only media from the worker's workspace.** Files must be inside the worker's own workspace, with
+  symbolic links followed, and be images, videos or PDFs by their contents, up to 10 a message.
+  Anything else, or a file Buzz refuses, is named in a note on the message instead.
+- **New access: read files.** Buzz asks you to approve it on update. It is used only for the files
+  workers attach.
+
 ## 0.4.0 (16 Nov 2026)
 
 - **Chat both ways, as with Buzz's own Claude agent.** A worker now sees the conversation, not only

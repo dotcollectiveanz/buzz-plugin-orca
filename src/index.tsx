@@ -26,7 +26,14 @@ export function apply(ctx: Context) {
   setReact(ctx.react);
   const { agents, host } = ctx;
   const orca = host.spawn ? new Orca(host.spawn.bind(host)) : undefined;
-  const runtime = orca ? new OrcaRuntime(agents.harness, orca) : undefined;
+  // The manifest's `host.files`: reading the files workers attach.
+  const files =
+    host.readFile && host.resolveDirectory
+      ? { readFile: host.readFile.bind(host), resolveDirectory: host.resolveDirectory.bind(host) }
+      : undefined;
+  const runtime = orca
+    ? new OrcaRuntime(agents.harness, orca, globalThis.localStorage, Date.now, files)
+    : undefined;
   if (runtime) ctx.effect(() => () => runtime.dispose());
 
   const tabs = runtime ? createTabs({ orca, runtime }) : undefined;

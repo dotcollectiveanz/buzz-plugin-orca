@@ -17,6 +17,8 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
   supervised Orca worker, in a new Orca workspace or in the repository's own checkout.
 - **Follow-ups go to the same worker.** Another message in the thread reaches the worker as a
   follow-up Task, even while it is still busy.
+- **Files come back too.** A worker can attach screenshots, images, videos and PDFs from its
+  workspace to its messages. They are posted with the message, as Buzz's own agents attach files.
 - **Questions come to you.** When the worker needs a decision, it asks. The question is posted in
   the thread and tags you. Your next message in the thread is its answer.
 - **Stops are reported.** When a worker stops without reporting, the thread says why and tags you.
@@ -49,7 +51,9 @@ Nothing else to set up: no link, no PATH change, no key. If Orca is closed, the 
 
 - Run Orca's CLI through `sh`. The declared command is a short script that finds `Orca.app` (in
   `/Applications`, in `~/Applications`, or wherever Spotlight finds it, else an `orca` on your
-  PATH) and runs its CLI with the plugin's arguments. Nothing else: no network, no files, no MCP.
+  PATH) and runs its CLI with the plugin's arguments.
+- Read files, only to attach what a worker names in its messages: images, videos and PDFs inside
+  that worker's own workspace. Nothing else is read. No network, no MCP.
 
 ## How it works
 
@@ -63,7 +67,9 @@ The plugin is an Orca orchestration coordinator. For each conversation it:
    with the conversation's earlier messages, read as the agent, and how to post back;
 4. waits for the Run's mail (`orca orchestration check --terminal <mailbox> --wait`) and posts each
    `status` message (the worker's messages while it works) to the conversation, then the
-   `worker_done` reply, a `question` or an `escalation`, which end the turn.
+   `worker_done` reply, a `question` or an `escalation`, which end the turn. Files the worker names
+   with `Attach: <path>` lines are posted with the message through Buzz's own `send` tool, which
+   uploads them as the agent.
 
 A later message goes to the worker with `orchestration send`, or answers its question with
 `orchestration reply`. Each conversation's Run, worker and state are kept in Buzz's local storage.

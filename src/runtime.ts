@@ -14,6 +14,15 @@ import type {
   HarnessKit,
   RelayEvent,
 } from "./buzz";
+import {
+  type Attachment,
+  type Files,
+  escapeMentions,
+  readAttachments,
+  refusedText,
+  splitAttachments,
+  workspaceDir,
+} from "./attachments";
 import { launchChoice } from "./choices";
 import { contextText, readConversation } from "./context";
 import { type Message, type Orca, OrcaError, type Repo } from "./orca";
@@ -69,7 +78,7 @@ export type ConversationRecord = Readonly<{
   updatedAt: number;
 }>;
 
-type Live = { agent: AgentHandle; conversation: HarnessConversation };
+type Live = { agent: AgentHandle; conversation: HarnessConversation; event: RelayEvent };
 type Waiter = { done: Promise<void>; abort: AbortController };
 
 const recordId = (agent: string, key: string) => `${agent}|${key}`;
@@ -105,6 +114,8 @@ export class OrcaRuntime {
     private readonly orca: Orca,
     private readonly storage: Storage | undefined = globalThis.localStorage,
     private readonly now: () => number = Date.now,
+    /** The host's file access, for files workers attach. */
+    private readonly files?: Files,
   ) {}
 
   // Records ---------------------------------------------------------------
@@ -174,7 +185,7 @@ export class OrcaRuntime {
     delivery.acknowledged?.();
     const agent = delivery.agent;
     const id = recordId(agent.key, conversation.key);
-    this.live.set(id, { agent, conversation });
+    this.live.set(id, { agent, conversation, event });
     const resumed = trigger.type === "mention" && "resumed" in trigger && !!trigger.resumed;
     // Handing over is one at a time per conversation; waiting for the worker
     // is not, so a follow-up reaches Orca while the worker is still busy.
@@ -417,20 +428,22 @@ export class OrcaRuntime {
   /** Posts one message of the Run's mail. True when the wait is over. */
   private async deliver(id: string, message: Message) {
     const dispatch = message.payload?.dispatchId;
+    // Its `Attach: <path>` lines name files to post with the message.
+    const { text: body, paths } = splitAttachments(message.body ?? "");
     if (message.type === "status") {
       // A message the worker posts while it works; the turn goes on.
-      const text = (message.body ?? "").trim() || (message.subject ?? "").trim();
-      if (text) await this.say(id, text);
+      const text = body || (message.subject ?? "").trim();
+      if (text || paths.length) await this.say(id, text, false, paths);
       return false;
     }
     if (message.type === "worker_done") {
       this.update(id, { status: "done", ...(dispatch && { dispatch }) });
-      await this.say(id, reportText(message.body ?? message.subject ?? "", message.payload?.outcome));
+      await this.say(id, reportText(body || (message.subject ?? ""), message.payload?.outcome), false, paths);
       return true;
     }
     if (message.type === "question") {
       this.update(id, { status: "question", question: message.id, ...(dispatch && { dispatch }) });
-      await this.say(id, questionText(message.body ?? message.subject ?? ""), true);
+      await this.say(id, questionText(body || (message.subject ?? "")), true, paths);
       return true;
     }
     if (message.type === "escalation") {
@@ -461,12 +474,75 @@ export class OrcaRuntime {
     if (record.workspace) await this.orca.activate(record.workspace);
   }
 
-  private async say(id: string, text: string, notifyOwner = false) {
+  /** Posts `text` as the agent, with the files at `paths` attached. */
+  private async say(id: string, text: string, notifyOwner = false, paths: readonly string[] = []) {
     const live = this.live.get(id);
     if (!live) return;
+    let note = "";
+    if (paths.length) {
+      const record = this.record(id);
+      const { attached, refused } =
+        this.files && this.kit.tools && record
+          ? await readAttachments(this.files, workspaceDir(record.workspace, record.repo), paths)
+          : { attached: [], refused: paths.map((path) => ({ path, reason: "this version of Buzz can't attach files" })) };
+      note = refusedText(refused);
+      if (attached.length) {
+        const failed = await this.send(live, [text, note].filter(Boolean).join("\n\n"), attached, notifyOwner);
+        if (!failed) return;
+        note = refusedText([...refused, ...attached.map(({ path }) => ({ path, reason: failed }))]);
+      }
+    }
+    const posted = [text, note].filter(Boolean).join("\n\n");
+    if (!posted) return;
     await this.kit
-      .reply(live.agent, live.conversation, text, notifyOwner ? { notifyOwner } : undefined)
+      .reply(live.agent, live.conversation, posted, notifyOwner ? { notifyOwner } : undefined)
       .catch(() => undefined);
+  }
+
+  /** Posts a message with files through Buzz's own `send` tool, as Buzz's
+   * Claude agent does: it uploads each file as the agent and attaches it.
+   * Resolves with why it failed, or undefined once posted. */
+  private async send(live: Live, text: string, attached: readonly Attachment[], notifyOwner: boolean) {
+    // `send` reads each file by the path it is given; its last part is the
+    // name the message shows.
+    const files = new Map(attached.map((file, index) => [`${index}/${file.name}`, file.data]));
+    const handler = this.kit.tools!(live.agent, live.conversation, {
+      read: async (path) => {
+        const data = files.get(path);
+        if (!data) throw new Error(`Not an attachment: ${path}`);
+        return data;
+      },
+    });
+    const { conversation, event } = live;
+    try {
+      const answer = (await handler({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "send",
+          arguments: {
+            ...(text && { text: escapeMentions(text) }),
+            files: [...files.keys()],
+            audience: "everyone",
+            // Where `kit.reply` posts: in the mention's thread, unless the
+            // conversation is the thread, which `send` replies in already,
+            // or stays at the top level.
+            ...(!conversation.topLevel && !conversation.root && { reply: event.id }),
+            ...(notifyOwner && { mentions: [live.agent.owner] }),
+          },
+        },
+      })) as {
+        result?: { isError?: boolean; content?: { text?: string }[] };
+        error?: { message?: string };
+      };
+      if (answer?.error) return answer.error.message ?? "Buzz refused the message";
+      if (!answer?.result) return "Buzz gave no answer";
+      if (answer.result.isError) return answer.result.content?.[0]?.text ?? "Buzz refused the message";
+      return undefined;
+    } catch (error) {
+      return errorText(error);
+    }
   }
 
   dispose() {

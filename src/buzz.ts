@@ -70,6 +70,9 @@ export type HarnessConversation = Readonly<{
   where: string;
 }>;
 
+/** Answers one MCP JSON-RPC message. */
+export type McpHandler = (message: unknown) => Promise<unknown>;
+
 export type HarnessKit = Readonly<{
   /** Undefined when the harness must not act: a mention that is not the
    * owner's own or attested by them, another trigger, or no channel. */
@@ -77,6 +80,14 @@ export type HarnessKit = Readonly<{
     delivery: Delivery,
     scope: HarnessScope,
   ): Promise<HarnessConversation | undefined>;
+  /** Answers the agent's Buzz tools over MCP, acting in `conversation`.
+   * `read` gives the file an upload names; without it, uploads of local
+   * files fail. Optional here: the plugin attaches no files without it. */
+  tools?(
+    agent: AgentHandle,
+    conversation?: HarnessConversation,
+    options?: Readonly<{ read?(path: string): Promise<Uint8Array> }>,
+  ): McpHandler;
   /** Posts `text` as the agent in the conversation's thread, or at the top
    * level. `notifyOwner` tags the owner. */
   reply(
@@ -185,6 +196,20 @@ export type HostProcess = Readonly<{
 
 export type Host = Readonly<{
   spawn?: (id: string, options?: HostProcessOptions) => Promise<HostProcess>;
+  /** Reads a file of at most 50 MB, for a plugin whose manifest declares
+   * `host.files`. `path` is absolute, `~/…`, or relative to `cwd`. A missing
+   * file rejects with "No such file". */
+  readFile?: (
+    path: string,
+    options?: Readonly<{ cwd?: string }>,
+  ) => Promise<Uint8Array>;
+  /** `path`, absolute or `~/…`, as an absolute directory without symbolic
+   * links, for a plugin whose manifest declares `host.files`. With
+   * `create: false`, a missing path or one that is not a directory rejects. */
+  resolveDirectory?: (
+    path: string,
+    options?: Readonly<{ create?: boolean }>,
+  ) => Promise<string>;
 }>;
 
 export type Context = Readonly<{
