@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0 (18 Nov 2026)
+
+- **First stable release.** The same plugin as 0.7.0, now stable: Orca agents run each turn as an
+  Orca worker, chat both ways with Buzz, send and receive files, and share to the Marketplace.
+- Checked against Orca 1.4.256: its agents, models and thinking levels are unchanged.
+
 ## 0.7.0 (18 Nov 2026)
 
 - **Share Orca agents to the Marketplace.** The agent's card menu now offers **Share**, as it does
