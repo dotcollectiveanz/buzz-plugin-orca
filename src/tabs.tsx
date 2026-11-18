@@ -7,16 +7,18 @@ import type { AgentCreateProps, AgentSettingsHost, AgentViewProps } from "./buzz
 import type { Environment, Orca, Repo } from "./orca";
 import { React } from "./react";
 import type { ConversationRecord, OrcaRuntime, Status } from "./runtime";
-import { type Config, config, repoSelector } from "./settings";
+import { type Config, config, pubkey, repoSelector } from "./settings";
 import {
   Button,
   type Choice,
   ChoiceRow,
+  Field,
   Instructions,
   layout,
   SectionHeader,
   SettingsGroup,
   Toggle,
+  TextInput,
 } from "./ui";
 
 type Read<T> =
@@ -219,6 +221,28 @@ function RuntimeRows({ value, refs, disabled, onChange }: PartProps) {
   );
 }
 
+/** Who a worker's questions tag, when not the owner. */
+function QuestionsTo({ value, disabled, onChange }: PartProps) {
+  const invalid = !!value.questionsTo.trim() && !pubkey(value.questionsTo);
+  return (
+    <Field
+      id="orca-questions-to"
+      label="Questions go to"
+      optional
+      error={invalid ? "Enter an npub or a 64-character hex public key." : undefined}
+      description="The Buzz agent or person to tag when a worker asks a question, such as a project agent that answers for you. Their npub or hex public key. Empty tags you. Stops and errors still tag you."
+    >
+      <TextInput
+        id="orca-questions-to"
+        value={value.questionsTo}
+        disabled={disabled}
+        invalid={invalid}
+        onChange={(questionsTo) => onChange({ ...value, questionsTo })}
+      />
+    </Field>
+  );
+}
+
 const STATUS: Readonly<Record<Status, string>> = {
   working: "Working",
   question: "Waiting for your answer",
@@ -301,11 +325,12 @@ export function createTabs(
     useFirstRepo(repos, draft, (next) => setDraft((current) => (current.repo ? current : next)));
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
+    const invalid = !!draft.questionsTo.trim() && !pubkey(draft.questionsTo);
     const submit = async () => {
       setSaving(true);
       setError("");
       try {
-        await save({ ...agent.config, ...draft });
+        await save({ ...agent.config, ...draft, questionsTo: pubkey(draft.questionsTo) ?? "" });
       } catch (reason) {
         setError(errorText(reason));
       } finally {
@@ -336,8 +361,13 @@ export function createTabs(
             />
           </>
         )}
-        {settingsSection !== "identity" && <RuntimeRows {...part} />}
-        <Button type="submit" variant="prominent" disabled={!changed || saving} wide>
+        {settingsSection !== "identity" && (
+          <>
+            <RuntimeRows {...part} />
+            <QuestionsTo {...part} />
+          </>
+        )}
+        <Button type="submit" variant="prominent" disabled={!changed || saving || invalid} wide>
           {saving ? "Saving…" : "Save"}
         </Button>
         {settingsSection !== "identity" && settingsContent}

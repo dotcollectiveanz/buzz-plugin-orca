@@ -81,10 +81,21 @@ export type ConversationRecord = Readonly<{
   updatedAt: number;
 }>;
 
-type Live = { agent: AgentHandle; conversation: HarnessConversation; event: RelayEvent };
+type Live = {
+  agent: AgentHandle;
+  conversation: HarnessConversation;
+  event: RelayEvent;
+  /** Who a worker's question tags instead of the owner (`questionsTo`). */
+  questionsTo?: string;
+};
+/** Whom a post tags: nobody, the agent's owner, or for a worker's question,
+ * whoever the agent's `questionsTo` names (the owner when unset). */
+type Notify = false | "owner" | "question";
 type Waiter = { done: Promise<void>; abort: AbortController };
 
 const recordId = (agent: string, key: string) => `${agent}|${key}`;
+const unreachedText = (why: string) =>
+  `I couldn't tag who this agent's questions go to (${why}), so I'm asking you.`;
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -193,7 +204,7 @@ export class OrcaRuntime {
     delivery.acknowledged?.();
     const agent = delivery.agent;
     const id = recordId(agent.key, conversation.key);
-    this.live.set(id, { agent, conversation, event });
+    this.live.set(id, { agent, conversation, event, ...(settings.questionsTo && { questionsTo: settings.questionsTo }) });
     const resumed = trigger.type === "mention" && "resumed" in trigger && !!trigger.resumed;
     // Handing over is one at a time per conversation; waiting for the worker
     // is not, so a follow-up reaches Orca while the worker is still busy.
@@ -289,7 +300,7 @@ export class OrcaRuntime {
     } catch (error) {
       const message = errorText(error);
       this.update(id, { status: "failed", error: message });
-      await this.say(id, `I couldn't hand this to Orca. ${message}`, true);
+      await this.say(id, `I couldn't hand this to Orca. ${message}`, "owner");
       throw error;
     }
   }
@@ -435,7 +446,7 @@ export class OrcaRuntime {
             await this.say(
               id,
               `I lost track of the Orca worker: ${errorText(error)}. It may still be working: open it in Orca, or reply here to try again.`,
-              true,
+              "owner",
             );
             return;
           }
@@ -472,12 +483,12 @@ export class OrcaRuntime {
     }
     if (message.type === "question") {
       this.update(id, { status: "question", question: message.id, ...(dispatch && { dispatch }) });
-      await this.say(id, questionText(body || (message.subject ?? "")), true, paths);
+      await this.say(id, questionText(body || (message.subject ?? "")), "question", paths);
       return true;
     }
     if (message.type === "escalation") {
       this.update(id, { status: "stopped", ...(dispatch && { dispatch }) });
-      await this.say(id, stoppedText(message.payload?.stopReason, message.body), true);
+      await this.say(id, stoppedText(message.payload?.stopReason, message.body), "owner");
       return true;
     }
     return false;
@@ -494,7 +505,7 @@ export class OrcaRuntime {
       await this.say(id, "Stopped the Orca worker.");
     } catch (error) {
       this.update(id, { status: "stopped", error: errorText(error) });
-      await this.say(id, `Stopped following the Orca worker, but Orca did not confirm it stopped: ${errorText(error)}`, true);
+      await this.say(id, `Stopped following the Orca worker, but Orca did not confirm it stopped: ${errorText(error)}`, "owner");
     }
   }
 
@@ -503,35 +514,47 @@ export class OrcaRuntime {
     if (record.workspace) await this.on(record.host).activate(record.workspace);
   }
 
-  /** Posts `text` as the agent, with the files at `paths` attached. */
-  private async say(id: string, text: string, notifyOwner = false, paths: readonly string[] = []) {
+  /** Posts `text` as the agent, with the files at `paths` attached. A
+   * question for someone other than the owner goes through `send`, which can
+   * tag them; if it can't, the owner is tagged instead. */
+  private async say(id: string, text: string, notify: Notify = false, paths: readonly string[] = []) {
     const live = this.live.get(id);
     if (!live) return;
+    const to = notify === "question" && live.questionsTo && this.kit.tools ? live.questionsTo : undefined;
     let note = "";
+    let attached: Attachment[] = [];
     if (paths.length) {
       const record = this.record(id);
-      const { attached, refused } =
+      const read =
         this.files && this.kit.tools && record
           ? await readAttachments(this.files, workspaceDir(record.workspace, record.repo), paths)
           : { attached: [], refused: paths.map((path) => ({ path, reason: "this version of Buzz can't attach files" })) };
-      note = refusedText(refused);
-      if (attached.length) {
-        const failed = await this.send(live, [text, note].filter(Boolean).join("\n\n"), attached, notifyOwner);
+      note = refusedText(read.refused);
+      attached = [...read.attached];
+      if (attached.length || to) {
+        const failed = await this.send(live, [text, note].filter(Boolean).join("\n\n"), attached, to ?? (notify ? live.agent.owner : undefined));
         if (!failed) return;
-        note = refusedText([...refused, ...attached.map(({ path }) => ({ path, reason: failed }))]);
+        note = [
+          refusedText([...read.refused, ...attached.map(({ path }) => ({ path, reason: failed }))]),
+          to && unreachedText(failed),
+        ].filter(Boolean).join("\n\n");
       }
+    } else if (to && text) {
+      const failed = await this.send(live, text, [], to);
+      if (!failed) return;
+      note = unreachedText(failed);
     }
     const posted = [text, note].filter(Boolean).join("\n\n");
     if (!posted) return;
     await this.kit
-      .reply(live.agent, live.conversation, posted, notifyOwner ? { notifyOwner } : undefined)
+      .reply(live.agent, live.conversation, posted, notify ? { notifyOwner: true } : undefined)
       .catch(() => undefined);
   }
 
   /** Posts a message with files through Buzz's own `send` tool, as Buzz's
-   * Claude agent does: it uploads each file as the agent and attaches it.
-   * Resolves with why it failed, or undefined once posted. */
-  private async send(live: Live, text: string, attached: readonly Attachment[], notifyOwner: boolean) {
+   * Claude agent does: it uploads each file as the agent and attaches it,
+   * and tags `mention`. Resolves with why it failed, or undefined once posted. */
+  private async send(live: Live, text: string, attached: readonly Attachment[], mention: string | undefined) {
     // `send` reads each file by the path it is given; its last part is the
     // name the message shows.
     const files = new Map(attached.map((file, index) => [`${index}/${file.name}`, file.data]));
@@ -552,13 +575,13 @@ export class OrcaRuntime {
           name: "send",
           arguments: {
             ...(text && { text: escapeMentions(text) }),
-            files: [...files.keys()],
+            ...(files.size && { files: [...files.keys()] }),
             audience: "everyone",
             // Where `kit.reply` posts: in the mention's thread, unless the
             // conversation is the thread, which `send` replies in already,
             // or stays at the top level.
             ...(!conversation.topLevel && !conversation.root && { reply: event.id }),
-            ...(notifyOwner && { mentions: [live.agent.owner] }),
+            ...(mention && { mentions: [mention] }),
           },
         },
       })) as {

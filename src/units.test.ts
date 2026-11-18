@@ -31,6 +31,13 @@ describe("settings", () => {
     // A server is this computer's pairing: it never syncs.
     expect(withSyncedSettings(config({ host: "GCP build-loop" }), { agent: "codex" }).host).toBe("GCP build-loop");
   });
+  it("tags the owner on questions unless a pubkey is set, which stays on this device", () => {
+    expect(config(undefined).questionsTo).toBe("");
+    expect(config({ questionsTo: ` ${"A".repeat(64)} ` }).questionsTo).toBe("a".repeat(64));
+    expect(config({ questionsTo: "npub1" + "q".repeat(58) }).questionsTo).toBe("npub1" + "q".repeat(58));
+    expect(config({ questionsTo: "@Project Agent" }).questionsTo).toBe("");
+    expect(withSyncedSettings(config({ questionsTo: "a".repeat(64) }), { agent: "codex" }).questionsTo).toBe("a".repeat(64));
+  });
 });
 
 describe("synced settings", () => {
