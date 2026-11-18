@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0 (18 Nov 2026)
+
+- **Share Orca agents to the Marketplace.** The agent's card menu now offers **Share**, as it does
+  for Buzz's own agents, without switching harness. Orca isn't a Marketplace runtime, so the agent
+  is listed as the coding agent its workers run (Claude Code, Codex, Goose or Pi), with its model
+  and instructions: whoever adds it gets that agent on their own computer. The repository and other
+  Orca settings aren't shared. An agent running another coding agent says why it can't be shared.
+- **Instructions move with the agent.** Changing an agent's harness to or from Orca now keeps its
+  instructions, and Buzz can set instructions on a new Orca agent.
+
 ## 0.6.0 (17 Nov 2026)
 
 - **Files you send reach the worker.** Images, PDFs and other files attached in the conversation

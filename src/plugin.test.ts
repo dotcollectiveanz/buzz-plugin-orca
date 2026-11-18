@@ -34,6 +34,12 @@ describe("plugin.js", () => {
     // An agent whose settings sync can't save or start on a type without these.
     expect(Object.keys(type?.syncedSettings?.schema ?? {}).sort()).toEqual(["agent", "effort", "model", "placement", "scope"]);
     expect(type?.tabs?.map((tab) => tab.id)).toEqual(["settings", "activity"]);
+    // Buzz's agent menu offers Share only with `exportShared`; a share's
+    // instructions, and a type change's, come through `carry` and `adopt`.
+    const shared = { ...(type!.defaults().config as object), model: "opus", instructions: "Be brief." };
+    expect(type?.exportShared?.(shared)).toEqual({ runtime: "claude", model: "opus" });
+    expect(type?.carry?.(shared)).toEqual({ instructions: "Be brief." });
+    expect(type?.adopt?.({ instructions: "New." }, type!.defaults().config)).toMatchObject({ instructions: "New." });
     const agent = { key: "k", pubkey: "p", name: "Orca", type: "orca/orca", owner: "o", relay: "r", config: type!.defaults().config };
     const create = renderToStaticMarkup(
       React.createElement(type!.Create!, { config: agent.config, onChange: () => undefined, disabled: false }),

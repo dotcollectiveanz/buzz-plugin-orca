@@ -27,6 +27,12 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
 - **Settings:** repository, coding agent, workspace (new or the checkout), base branch, model,
   effort, whether workers stay open in Orca, instructions for every worker, and conversations
   (per thread or per channel).
+- **Share to the Marketplace.** An Orca agent's card menu offers **Share**, as Buzz's own agents
+  do. Orca isn't a Marketplace runtime, so the agent is listed as the coding agent its workers run
+  (Claude Code, Codex, Goose or Pi) with its model and instructions: whoever adds it gets that agent
+  on their own computer, without Orca. The repository and other settings aren't shared.
+- **Instructions move with the agent.** Changing an agent's harness to or from Orca keeps its
+  instructions.
 - **Activity:** each conversation's worker, its state, and buttons to open the conversation or
   show the worker in Orca.
 

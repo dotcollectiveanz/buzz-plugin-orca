@@ -14,6 +14,7 @@ import {
   syncedSettingsSchema,
   withSyncedSettings,
 } from "./settings";
+import { adopt, carry, exportShared } from "./share";
 import { createTabs } from "./tabs";
 
 export const TYPE_ID = "orca";
@@ -62,6 +63,10 @@ export function apply(ctx: Context) {
     timeoutMs: HANDOVER_MS,
     syncedSettings: { schema: syncedSettingsSchema, withSynced: withSyncedSettings },
     resumes: true,
+    // Share, and the instructions moving with the agent between harnesses.
+    exportShared,
+    carry,
+    adopt,
   };
   agents.register<Config>(type);
 }

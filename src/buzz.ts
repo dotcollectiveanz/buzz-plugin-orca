@@ -182,7 +182,24 @@ export type AgentType<Config = unknown> = {
   /** Per-run deadline in milliseconds, up to 30 minutes. */
   timeoutMs?: number;
   resumes?: boolean;
+  /** The catalog runtime (`claude`, `codex`, `goose`, `pi`), provider and
+   * model a share or export of `config` records. Without it, its agents are
+   * not shared: the agent menu offers Share only with it. */
+  exportShared?(config: Config): Readonly<{ runtime: string; provider?: string; model: string }>;
+  /** What of `config` another type may adopt when the agent changes type;
+   * a share's instructions come from it. */
+  carry?(config: Config): Carry;
+  /** A brought-over agent's config: `config` with whatever of `carry` the
+   * type has a place for. Without it, Buzz sets no instructions on the type. */
+  adopt?(carry: Carry, config: Config): Config;
 };
+
+/** What an agent brings from another type (`src/features/agents/native.ts`). */
+export type Carry = Readonly<{
+  instructions?: string;
+  /** Its working directory, absolute or `~/…`. */
+  workspace?: string;
+}>;
 
 export type Agents = Readonly<{
   harness: HarnessKit;
