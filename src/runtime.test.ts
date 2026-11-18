@@ -153,6 +153,31 @@ describe("OrcaRuntime", () => {
     expect(runtime.records()[0]).toMatchObject({ status: "done", run: "run_1", dispatch: "ctx_1" });
   });
 
+  it("runs a remote agent's worker, mailbox and follow-ups on its Orca server", async () => {
+    const { spawn, calls } = orcaWith([
+      { result: { messages: [{ id: "m1", type: "worker_done", body: "Done." }] } },
+      { result: { messages: [{ id: "m2", type: "worker_done", body: "Also done." }] } },
+    ]);
+    const { kit } = fakeKit(THREAD);
+    const storage = memoryStorage();
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), storage);
+    const remote = { ...CONFIG, host: "GCP build-loop" };
+    const first = mention("build the header", remote);
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    // A later change of host doesn't move the conversation's worker.
+    const second = mention("now the footer", CONFIG);
+    await runtime.run(second.delivery);
+    await Promise.all(second.working);
+
+    for (const call of calls) expect(flag(call.args, "--environment")).toBe("GCP build-loop");
+    expect(calls.map((call) => call.args[1])).toEqual(
+      expect.arrayContaining(["show", "create", "run-create", "worker-start", "check", "send"]),
+    );
+    expect(JSON.parse(storage.getItem(MAILBOXES_KEY) ?? "{}")).toEqual({ "GCP build-loop|/code/shop": "term_mail" });
+    expect(runtime.records()[0]).toMatchObject({ host: "GCP build-loop", status: "done" });
+  });
+
   it("sends a later mention to the same worker as a follow-up", async () => {
     const { spawn, calls } = orcaWith([
       { result: { messages: [{ id: "m1", type: "worker_done", body: "Done." }] } },

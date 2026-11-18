@@ -4,7 +4,7 @@
 import { AGENTS } from "./catalog";
 import { agentLabel, effortNote, effortsFor, fit, modelNote, modelsOf } from "./choices";
 import type { AgentCreateProps, AgentSettingsHost, AgentViewProps } from "./buzz";
-import type { Orca, Repo } from "./orca";
+import type { Environment, Orca, Repo } from "./orca";
 import { React } from "./react";
 import type { ConversationRecord, OrcaRuntime, Status } from "./runtime";
 import { type Config, config, repoSelector } from "./settings";
@@ -77,8 +77,11 @@ function effortChoices(agent: string, model: string): Choice[] {
   ];
 }
 
+const THIS_COMPUTER = "This computer";
+
 type PartProps = Readonly<{
   value: Config;
+  hosts: Read<readonly Environment[]>;
   repos: Read<readonly Repo[]>;
   refs: Read<readonly string[]>;
   disabled: boolean;
@@ -88,6 +91,7 @@ type PartProps = Readonly<{
 /** Where workers start and which agent they are: the identity part. */
 function IdentityRows({
   value,
+  hosts,
   repos,
   disabled,
   onChange,
@@ -102,11 +106,33 @@ function IdentityRows({
       ? [{ value: selected, label: value.repo.replace(/^(name|path|id):/, "") }]
       : []),
   ];
+  const servers = hosts.state === "ready" ? hosts.value : [];
+  const hostChoices: Choice[] = [
+    { value: DEFAULT, label: THIS_COMPUTER },
+    ...servers.map((server) => ({ value: server.name, label: server.name })),
+    ...(value.host && !servers.some((server) => server.name === value.host || server.id === value.host)
+      ? [{ value: value.host, label: value.host }]
+      : []),
+  ];
   const noModel = modelNote(value.agent);
   const noEffort = effortNote(value.agent, value.model);
   return (
     <SettingsGroup>
       {typeControl}
+      <ChoiceRow
+        title="Runs on"
+        value={servers.find((server) => server.id === value.host)?.name ?? value.host}
+        choices={hostChoices}
+        loading={hosts.state === "loading"}
+        disabled={disabled}
+        description={
+          hosts.state === "error"
+            ? hosts.message
+            : "This computer's Orca, or a remote Orca server it is paired with."
+        }
+        // A repository and its branches are one server's: choose again.
+        onChange={(host) => host !== value.host && set({ host, repo: "", baseBranch: "" })}
+      />
       <ChoiceRow
         title="Repository"
         value={selected}
@@ -214,17 +240,21 @@ export function createTabs(
   options: Readonly<{ orca: Orca | undefined; runtime: OrcaRuntime }>,
 ) {
   const { orca, runtime } = options;
-  const loadRepos = orca ? (signal: AbortSignal) => orca.repos(signal) : undefined;
-
-  /** Orca's repositories, and the chosen one's branches. */
+  /** The remote servers Orca has saved, the chosen server's repositories,
+   * and the chosen repository's branches. */
   function useOrca(value: Config) {
-    const repos = useRead("repos", loadRepos);
+    const server = orca?.on(value.host);
+    const hosts = useRead("hosts", orca ? (signal) => orca.environments(signal) : undefined);
+    const repos = useRead(
+      `repos|${value.host}`,
+      server ? (signal) => server.repos(signal) : undefined,
+    );
     const selected = repoSelector(value.repo);
     const refs = useRead(
-      value.placement === "new" ? selected : "",
-      orca ? (signal) => orca.refs(selected, signal) : undefined,
+      value.placement === "new" && selected ? `${value.host}|${selected}` : "",
+      server ? (signal) => server.refs(selected, signal) : undefined,
     );
-    return { repos, refs };
+    return { hosts, repos, refs };
   }
 
   /** Offers Orca's first repository to a config with none. */
@@ -242,12 +272,12 @@ export function createTabs(
 
   function Create(props: AgentCreateProps<Config>) {
     const value = config(props.config);
-    const { repos, refs } = useOrca(value);
+    const { hosts, repos, refs } = useOrca(value);
     const { onReadyChange, onChange } = props;
     const ready = !!repoSelector(value.repo);
     React.useEffect(() => onReadyChange?.(ready), [ready, onReadyChange]);
     useFirstRepo(repos, value, (next) => onChange(next, { suggested: true }));
-    const part = { value, repos, refs, disabled: props.disabled, onChange: (next: Config) => onChange(next) };
+    const part = { value, hosts, repos, refs, disabled: props.disabled, onChange: (next: Config) => onChange(next) };
     return (
       <div className="grid gap-4">
         <IdentityRows {...part} />
@@ -267,7 +297,7 @@ export function createTabs(
     const [draft, setDraft] = React.useState<Config>(saved);
     const [saving, setSaving] = React.useState(false);
     const [error, setError] = React.useState("");
-    const { repos, refs } = useOrca(draft);
+    const { hosts, repos, refs } = useOrca(draft);
     useFirstRepo(repos, draft, (next) => setDraft((current) => (current.repo ? current : next)));
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
@@ -282,7 +312,7 @@ export function createTabs(
         setSaving(false);
       }
     };
-    const part = { value: draft, repos, refs, disabled: saving, onChange: setDraft };
+    const part = { value: draft, hosts, repos, refs, disabled: saving, onChange: setDraft };
     return (
       <form
         className="grid gap-4"
@@ -332,7 +362,7 @@ export function createTabs(
               {record.title}
             </span>
             <span className="block text-body-sm text-subtle">
-              {[STATUS[record.status], record.where, when(record.updatedAt), record.error]
+              {[STATUS[record.status], record.where, record.host && `on ${record.host}`, when(record.updatedAt), record.error]
                 .filter(Boolean)
                 .join(" · ")}
             </span>

@@ -24,7 +24,11 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
   the thread and tags you. Your next message in the thread is its answer.
 - **Stops are reported.** When a worker stops without reporting, the thread says why and tags you.
   Buzz's Stop on a working turn stops the worker.
-- **Settings:** repository, coding agent, workspace (new or the checkout), base branch, model,
+- **Runs here or on a server.** Each agent's **Runs on** setting picks this computer's Orca or a
+  remote Orca server it is paired with (`orca environment list`), such as a build server. The
+  worker, its workspace and its mailbox are then on that server, and the repository list is the
+  server's. A conversation stays on the server its worker started on.
+- **Settings:** where it runs, repository, coding agent, workspace (new or the checkout), base branch, model,
   effort, whether workers stay open in Orca, instructions for every worker, and conversations
   (per thread or per channel).
 - **Share to the Marketplace.** An Orca agent's card menu offers **Share**, as Buzz's own agents
@@ -45,6 +49,11 @@ Orca's workers run on your computer with your coding agents' own sign-in and per
 - Orca installed on the same computer, with at least one repository added to it.
 
 Nothing else to set up: no link, no PATH change, no key. If Orca is closed, the plugin opens it.
+
+For a remote server: pair it in Orca first, and make sure the chosen coding agent is installed
+there (a server may have only some of them, such as OpenCode). Files go both ways only on this
+computer: a worker on a server can't open files saved here, and files it attaches on the server
+are named in its message rather than posted.
 
 ## Install
 

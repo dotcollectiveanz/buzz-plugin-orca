@@ -7,6 +7,10 @@ export type Scope = "thread" | "channel";
 export type Placement = "new" | "main";
 
 export type Config = Readonly<{
+  /** Where workers run: empty for this computer's Orca, or the name (or id)
+   * of a saved remote Orca server (`orca environment list`), such as
+   * "GCP build-loop". The repository is that server's. */
+  host: string;
   /** An Orca repo selector (`name:dot-mcp`, `id:…`, `path:/…`), or a plain
    * name or path, which `repoSelector` turns into one. */
   repo: string;
@@ -28,6 +32,7 @@ export type Config = Readonly<{
 }>;
 
 export const DEFAULT_CONFIG: Config = Object.freeze({
+  host: "",
   repo: "",
   agent: "claude",
   placement: "new",
@@ -48,6 +53,7 @@ export const config = (value: unknown): Config => {
     value && typeof value === "object" ? (value as Partial<Config>) : {};
   const agent = text(saved.agent, DEFAULT_CONFIG.agent);
   return {
+    host: text(saved.host, ""),
     repo: text(saved.repo, ""),
     agent: /^[A-Za-z0-9._-]{1,64}$/.test(agent) ? agent : DEFAULT_CONFIG.agent,
     placement: saved.placement === "main" ? "main" : "new",
@@ -73,16 +79,17 @@ export const repoSelector = (repo: string) => {
 
 /** One short line under the agent's name. */
 export const summary = (value: unknown) => {
-  const { repo, agent, placement } = config(value);
+  const { host, repo, agent, placement } = config(value);
   const where = repo ? repoSelector(repo).replace(/^(name|path|id):/, "") : "no repo";
-  return `${agent} · ${where}${placement === "new" ? " · new workspaces" : ""}`;
+  return `${agent} · ${where}${host ? ` · on ${host}` : ""}${placement === "new" ? " · new workspaces" : ""}`;
 };
 
 // Synced settings (NIP-AP `buzz.agent.settings`). An agent whose settings
 // sync through its community can't start or save on a type without them, so
 // the type must declare them. Buzz requires every synced value to be text and
-// refuses unknown keys. The repository, base branch and keep-open choice stay
-// on this device: a repository is this computer's Orca's.
+// refuses unknown keys. The host, repository, base branch and keep-open choice
+// stay on this device: a remote server is one this computer's Orca has paired
+// with, and a repository is that Orca's.
 type SettingsSchema = Readonly<Record<string, "string" | readonly string[]>>;
 export const syncedSettingsSchema = {
   agent: "string",

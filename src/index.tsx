@@ -43,7 +43,7 @@ export function apply(ctx: Context) {
     title: "Orca",
     icon: OrcaIcon,
     description:
-      "Hands each request to a coding agent in Orca on this computer, in a workspace of your repository, and posts its report back. Each thread it is mentioned in is one worker.",
+      "Hands each request to a coding agent in Orca, on this computer or a paired remote Orca server, in a workspace of your repository, and posts its report back. Each thread it is mentioned in is one worker.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     summary: (agent) => summary(agent.config),
     ...(tabs && {

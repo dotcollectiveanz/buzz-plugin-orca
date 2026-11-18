@@ -62,6 +62,9 @@ export type ConversationRecord = Readonly<{
   root?: string;
   where: string;
   title: string;
+  /** The remote Orca server the worker runs on; absent for this computer.
+   * Its handles (mailbox, Run, dispatch) belong to that server. */
+  host?: string;
   repo: string;
   mailbox: string;
   run: string;
@@ -169,6 +172,11 @@ export class OrcaRuntime {
     return this.waiters.has(recordId(agent, key));
   }
 
+  /** The Orca a record's worker runs on, or the one `host` names. */
+  private on(host: string | undefined) {
+    return this.orca.on(host ?? "");
+  }
+
   // Turns -----------------------------------------------------------------
 
   async run(delivery: Delivery<unknown>) {
@@ -238,7 +246,7 @@ export class OrcaRuntime {
       const { request, context } = await this.shown(delivery, said);
       if (existing?.status === "question" && existing.question) {
         delivery.step?.("orca", "answer");
-        await this.orca.reply(
+        await this.on(existing.host).reply(
           {
             from: existing.mailbox,
             run: existing.run,
@@ -251,7 +259,7 @@ export class OrcaRuntime {
       } else if (existing) {
         delivery.step?.("orca", "follow-up");
         try {
-          await this.orca.send(
+          await this.on(existing.host).send(
             {
               from: existing.mailbox,
               run: existing.run,
@@ -313,25 +321,29 @@ export class OrcaRuntime {
   ) {
     if (!request) throw new Error("The message has no request in it.");
     const signal = this.lifetime.signal;
+    const orca = this.on(settings.host);
     delivery.step?.("orca", "repository");
     // With no repository chosen (an agent switched to this type keeps none),
     // the agent uses Orca's first one and says so, rather than refusing.
     const selector = repoSelector(settings.repo);
     let repo: Repo;
     let fallback = false;
-    if (selector) repo = await this.orca.repo(selector, signal);
+    if (selector) repo = await orca.repo(selector, signal);
     else {
-      const [first] = await this.orca.repos(signal);
-      if (!first) throw new Error("Orca has no repositories. Add one in Orca, then try again.");
+      const [first] = await orca.repos(signal);
+      if (!first)
+        throw new Error(
+          `${settings.host ? `The Orca server ${settings.host}` : "Orca"} has no repositories. Add one in Orca, then try again.`,
+        );
       repo = first;
       fallback = true;
     }
-    const mailbox = await this.mailbox(repo, signal);
+    const mailbox = await this.mailbox(orca, repo, signal);
     const title = taskTitle(text || "Files from Buzz");
-    const run = await this.orca.runCreate(mailbox, `Buzz: ${title}`, signal);
+    const run = await orca.runCreate(mailbox, `Buzz: ${title}`, signal);
     const name = workspaceName(title, conversation.root ?? event.id);
     delivery.step?.("orca", "worker");
-    const started = await this.orca.workerStart(
+    const started = await orca.workerStart(
       {
         from: mailbox,
         run,
@@ -363,6 +375,7 @@ export class OrcaRuntime {
       ...(conversation.root && { root: conversation.root }),
       where: conversation.where,
       title,
+      ...(orca.environment && { host: orca.environment }),
       repo: repo.path,
       mailbox,
       run: started.runId,
@@ -383,13 +396,15 @@ export class OrcaRuntime {
       );
   }
 
-  /** The repository's mailbox terminal, made again when it has gone. */
-  private async mailbox(repo: Repo, signal: AbortSignal) {
+  /** The repository's mailbox terminal on `orca`'s server, made again when it
+   * has gone. A remote server's are kept as `<server>|<path>`. */
+  private async mailbox(orca: Orca, repo: Repo, signal: AbortSignal) {
     const saved = readJson<Record<string, string>>(this.storage, MAILBOXES_KEY, {});
-    const known = saved[repo.path];
-    if (known && (await this.orca.live(known, signal))) return known;
-    const handle = await this.orca.mailbox(`path:${repo.path}`, signal);
-    writeJson(this.storage, MAILBOXES_KEY, { ...saved, [repo.path]: handle });
+    const key = orca.environment ? `${orca.environment}|${repo.path}` : repo.path;
+    const known = saved[key];
+    if (known && (await orca.live(known, signal))) return known;
+    const handle = await orca.mailbox(`path:${repo.path}`, signal);
+    writeJson(this.storage, MAILBOXES_KEY, { ...saved, [key]: handle });
     return handle;
   }
 
@@ -407,7 +422,7 @@ export class OrcaRuntime {
         if (!record || record.status !== "working") return;
         let messages: readonly Message[];
         try {
-          messages = await this.orca.check(
+          messages = await this.on(record.host).check(
             { terminal: record.mailbox, run: record.run, types: WAKE, timeoutMs: WAIT_MS },
             signal,
           );
@@ -474,7 +489,7 @@ export class OrcaRuntime {
     this.waiters.get(id)?.abort.abort();
     if (!record) return;
     try {
-      await this.orca.stop(record.dispatch, this.lifetime.signal);
+      await this.on(record.host).stop(record.dispatch, this.lifetime.signal);
       this.update(id, { status: "stopped" });
       await this.say(id, "Stopped the Orca worker.");
     } catch (error) {
@@ -485,7 +500,7 @@ export class OrcaRuntime {
 
   /** Shows a conversation's worker in Orca. */
   async show(record: ConversationRecord) {
-    if (record.workspace) await this.orca.activate(record.workspace);
+    if (record.workspace) await this.on(record.host).activate(record.workspace);
   }
 
   /** Posts `text` as the agent, with the files at `paths` attached. */
