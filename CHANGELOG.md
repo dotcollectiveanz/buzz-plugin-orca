@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0 (19 Nov 2026)
+
+- **Questions go to.** A new optional setting names the Buzz agent or person (by npub or hex
+  public key) that a worker's questions tag, instead of the agent's owner: for example a project
+  agent that answers the build agent's questions. Stops and errors still tag the owner. If the
+  question can't tag them (say they aren't in the channel), it tags the owner and says why. The
+  setting stays on this device, like the repository.
+
 ## 1.1.0 (18 Nov 2026)
 
 - **Run on a remote Orca server.** A new **Runs on** setting picks, per agent, this computer's Orca

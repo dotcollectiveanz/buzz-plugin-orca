@@ -20,8 +20,11 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
 - **Files both ways.** Files people attach in the conversation reach the worker: it is told where
   each is saved on this computer. A worker can attach screenshots, images, videos and PDFs from its
   workspace to its messages. They are posted with the message, as Buzz's own agents attach files.
-- **Questions come to you.** When the worker needs a decision, it asks. The question is posted in
-  the thread and tags you. Your next message in the thread is its answer.
+- **Questions come to you, or whoever you choose.** When the worker needs a decision, it asks. The
+  question is posted in the thread and tags you, or the agent or person its **Questions go to**
+  setting names (an npub or hex public key), such as a project agent that answers for you. They
+  must be in the channel; if they can't be tagged, you are. The next message in the thread that
+  mentions the agent, from you or one you attested, is its answer.
 - **Stops are reported.** When a worker stops without reporting, the thread says why and tags you.
   Buzz's Stop on a working turn stops the worker.
 - **Runs here or on a server.** Each agent's **Runs on** setting picks this computer's Orca or a
@@ -29,8 +32,8 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
   worker, its workspace and its mailbox are then on that server, and the repository list is the
   server's. A conversation stays on the server its worker started on.
 - **Settings:** where it runs, repository, coding agent, workspace (new or the checkout), base branch, model,
-  effort, whether workers stay open in Orca, instructions for every worker, and conversations
-  (per thread or per channel).
+  effort, whether workers stay open in Orca, instructions for every worker, conversations
+  (per thread or per channel), and who its questions go to.
 - **Share to the Marketplace.** An Orca agent's card menu offers **Share**, as Buzz's own agents
   do. Orca isn't a Marketplace runtime, so the agent is listed as the coding agent its workers run
   (Claude Code, Codex, Goose or Pi) with its model and instructions: whoever adds it gets that agent

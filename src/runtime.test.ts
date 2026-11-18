@@ -201,6 +201,49 @@ describe("OrcaRuntime", () => {
     expect(posted.at(-1)?.text).toBe("Also done.");
   });
 
+  it("tags whoever questions go to, and the owner for a stop", async () => {
+    const to = "b".repeat(64);
+    const { spawn } = orcaWith([
+      { result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } },
+    ]);
+    const { kit, posted, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("ship it", { ...CONFIG, questionsTo: to });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    expect(sent.at(-1)?.args).toMatchObject({ mentions: [to] });
+    expect(sent.at(-1)?.args.text).toContain("Which branch?");
+    expect(sent.at(-1)?.args).not.toHaveProperty("files");
+    expect(posted.some((post) => post.text.includes("Which branch?"))).toBe(false);
+  });
+
+  it("tags the owner when the question can't tag whoever it goes to", async () => {
+    const { spawn } = orcaWith([
+      { result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } },
+    ]);
+    const { kit, posted } = fakeKit(THREAD, { refuse: "not a member" });
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("ship it", { ...CONFIG, questionsTo: "c".repeat(64) });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    expect(posted.at(-1)).toMatchObject({ notifyOwner: true });
+    expect(posted.at(-1)?.text).toContain("Which branch?");
+    expect(posted.at(-1)?.text).toContain("not a member");
+  });
+
+  it("still tags the owner when a worker stops, whoever questions go to", async () => {
+    const { spawn } = orcaWith([
+      { result: { messages: [{ id: "e1", type: "escalation", body: "Stuck.", payload: { stopReason: "finished" } }] } },
+    ]);
+    const { kit, posted, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("ship it", { ...CONFIG, questionsTo: "d".repeat(64) });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    expect(sent).toHaveLength(0);
+    expect(posted.at(-1)).toMatchObject({ notifyOwner: true });
+  });
+
   it("posts a worker's question and sends the next mention as its answer", async () => {
     const { spawn, calls } = orcaWith([
       { result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } },

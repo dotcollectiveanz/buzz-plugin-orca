@@ -29,6 +29,9 @@ export type Config = Readonly<{
   instructions: string;
   /** Whether each thread is its own worker, or the whole channel is one. */
   scope: Scope;
+  /** Who a worker's questions tag: a Buzz pubkey (hex or npub), such as a
+   * project agent that answers them; empty tags the agent's owner. */
+  questionsTo: string;
 }>;
 
 export const DEFAULT_CONFIG: Config = Object.freeze({
@@ -42,6 +45,7 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
   keepOpen: true,
   instructions: "",
   scope: "thread",
+  questionsTo: "",
 });
 
 const text = (value: unknown, fallback: string) =>
@@ -64,7 +68,17 @@ export const config = (value: unknown): Config => {
     instructions:
       typeof saved.instructions === "string" ? saved.instructions : "",
     scope: saved.scope === "channel" ? "channel" : "thread",
+    questionsTo: pubkey(text(saved.questionsTo, "")) ?? "",
   };
+};
+
+/** `value` as a pubkey Buzz's `send` takes in `mentions` (lowercase hex, or an
+ * npub), or undefined when it is neither. */
+export const pubkey = (value: string) => {
+  const key = value.trim();
+  if (/^[0-9a-f]{64}$/i.test(key)) return key.toLowerCase();
+  if (/^npub1[02-9ac-hj-np-z]{58}$/.test(key)) return key;
+  return undefined;
 };
 
 /** Orca's selector for the configured repo: a selector as given, a path as
@@ -87,8 +101,8 @@ export const summary = (value: unknown) => {
 // Synced settings (NIP-AP `buzz.agent.settings`). An agent whose settings
 // sync through its community can't start or save on a type without them, so
 // the type must declare them. Buzz requires every synced value to be text and
-// refuses unknown keys. The host, repository, base branch and keep-open choice
-// stay on this device: a remote server is one this computer's Orca has paired
+// refuses unknown keys. The host, repository, base branch, keep-open choice and
+// who questions tag stay on this device: a remote server is one this computer's Orca has paired
 // with, and a repository is that Orca's.
 type SettingsSchema = Readonly<Record<string, "string" | readonly string[]>>;
 export const syncedSettingsSchema = {
