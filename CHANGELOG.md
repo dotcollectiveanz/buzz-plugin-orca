@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 (18 Nov 2026)
+
+- **Run on a remote Orca server.** A new **Runs on** setting picks, per agent, this computer's Orca
+  or a remote Orca server it is paired with, such as a build server. Every Orca command for that
+  agent then runs against the server (`--environment`): its repositories, workspaces, mailbox and
+  workers are the server's. A conversation keeps the server its worker started on. The setting
+  stays on this device, like the repository.
+- **Clearer start failures.** When Orca can't start a worker, the thread now says why (for
+  example, the coding agent isn't installed on the server) instead of "Orca refused the command".
+- Files people send, and files workers attach, still go both ways only for workers on this
+  computer.
+
 ## 1.0.0 (18 Nov 2026)
 
 - **First stable release.** The same plugin as 0.7.0, now stable: Orca agents run each turn as an

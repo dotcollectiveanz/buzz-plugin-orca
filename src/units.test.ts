@@ -21,6 +21,15 @@ describe("settings", () => {
     expect(repoSelector("~/code/shop")).toBe("path:~/code/shop");
     expect(repoSelector("id:abc")).toBe("id:abc");
     expect(summary({ repo: "shop", agent: "codex", placement: "main" })).toBe("codex · shop");
+    expect(summary({ repo: "shop", agent: "claude", placement: "main", host: "GCP build-loop" })).toBe(
+      "claude · shop · on GCP build-loop",
+    );
+  });
+  it("runs on this computer unless a remote server is chosen", () => {
+    expect(config(undefined).host).toBe("");
+    expect(config({ host: " GCP build-loop " }).host).toBe("GCP build-loop");
+    // A server is this computer's pairing: it never syncs.
+    expect(withSyncedSettings(config({ host: "GCP build-loop" }), { agent: "codex" }).host).toBe("GCP build-loop");
   });
 });
 
@@ -85,6 +94,13 @@ describe("Orca CLI", () => {
     const { spawn } = fakeOrca(() => ({ error: { code: "no_active_sender_terminal", message: "nope" } }));
     await expect(new Orca(spawn).call(["x"])).rejects.toMatchObject({ code: "no_active_sender_terminal" });
   });
+  it("says why a start failed", async () => {
+    const { spawn } = fakeOrca(() => ({
+      raw: JSON.stringify({ ok: false, result: { failedStage: "agent_readiness", lastError: "claude: command not found" } }),
+      code: 1,
+    }));
+    await expect(new Orca(spawn).call(["x"])).rejects.toEqual(new OrcaError("agent_readiness", "claude: command not found"));
+  });
   it("explains a missing orca", async () => {
     const orca = new Orca(async () => {
       throw new Error("No such file or directory (os error 2)");
@@ -116,6 +132,29 @@ describe("Orca CLI", () => {
     const { spawn, calls } = fakeOrca(() => ({ error: { code: "selector_not_found", message: "no repo" } }));
     await expect(new Orca(spawn).repo("name:x")).rejects.toMatchObject({ code: "selector_not_found" });
     expect(calls).toHaveLength(1);
+  });
+  it("aims every command but open at a remote server", async () => {
+    let open = false;
+    const { spawn, calls } = fakeOrca((args) => {
+      if (args[0] === "open") {
+        open = true;
+        return { result: {} };
+      }
+      if (args[0] === "environment") return { result: { environments: [{ id: "e1", name: "GCP build-loop" }, { id: "" }] } };
+      return open ? { result: { repos: [] } } : { error: { code: "runtime_unavailable", message: "closed" } };
+    });
+    const local = new Orca(spawn);
+    const remote = local.on("GCP build-loop");
+    expect(local.on("")).toBe(local);
+    await remote.repos();
+    expect(calls.map((call) => call.args)).toEqual([
+      ["repo", "list", "--environment", "GCP build-loop", "--json"],
+      ["open", "--json"],
+      ["repo", "list", "--environment", "GCP build-loop", "--json"],
+    ]);
+    // The saved servers are listed by this computer's Orca.
+    expect(await remote.environments()).toEqual([{ id: "e1", name: "GCP build-loop" }]);
+    expect(calls.at(-1)?.args).toEqual(["environment", "list", "--json"]);
   });
   it("sends a spec on stdin", async () => {
     const { spawn, calls } = fakeOrca(() => ({ result: { dispatchId: "d", runId: "r" } }));

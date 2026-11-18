@@ -2,7 +2,7 @@
   "id": "orca",
   "name": "Orca",
   "apiVersion": 1,
-  "description": "Buzz agents that hand each request to a coding agent in Orca on this computer, in a workspace of your repository, and post its report back to the thread.",
+  "description": "Buzz agents that hand each request to a coding agent in Orca, on this computer or a paired Orca server, in a workspace of your repository, and post its report back to the thread.",
   "discovery": {
     "category": "agents",
     "tags": [

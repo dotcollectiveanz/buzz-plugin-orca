@@ -79,6 +79,9 @@ export type Message = Readonly<{
 
 export type Repo = Readonly<{ id: string; path: string; displayName: string }>;
 
+/** A remote Orca server this computer's Orca has paired with. */
+export type Environment = Readonly<{ id: string; name: string }>;
+
 export type Started = Readonly<{
   dispatchId: string;
   taskId: string;
@@ -88,7 +91,19 @@ export type Started = Readonly<{
 }>;
 
 export class Orca {
-  constructor(private readonly spawn: Spawn) {}
+  /** `environment`: a saved remote Orca server's name or id, which every
+   * command but `open` runs against with `--environment`; empty for this
+   * computer's Orca. */
+  constructor(
+    private readonly spawn: Spawn,
+    readonly environment = "",
+  ) {}
+
+  /** The same CLI, aimed at a remote Orca server, or this computer's for "". */
+  on(environment: string): Orca {
+    const target = environment.trim();
+    return target === this.environment ? this : new Orca(this.spawn, target);
+  }
 
   private opening: Promise<unknown> | undefined;
 
@@ -123,8 +138,11 @@ export class Orca {
     let stderr = "";
     let process: HostProcess;
     try {
+      // `open` starts this computer's Orca, whatever server the rest run on.
+      const remote =
+        this.environment && args[0] !== "open" ? ["--environment", this.environment] : [];
       process = await this.spawn("orca", {
-        args: [...args, "--json"],
+        args: [...args, ...remote, "--json"],
         env: ENV,
         onStdout: (data) => {
           stdout += data;
@@ -146,7 +164,11 @@ export class Orca {
       const code = await process.exited;
       signal?.throwIfAborted();
       const parsed = envelope(stdout) as
-        | { ok?: boolean; result?: T; error?: { code?: string; message?: string } }
+        | {
+            ok?: boolean;
+            result?: T & { failedStage?: string; lastError?: string };
+            error?: { code?: string; message?: string };
+          }
         | undefined;
       if (!parsed || typeof parsed !== "object") {
         const detail = (stderr || stdout).trim().split("\n").slice(-3).join(" ");
@@ -158,11 +180,14 @@ export class Orca {
         );
       }
       if (parsed.error?.code === NOT_INSTALLED) throw new OrcaError("missing", MISSING);
-      if (parsed.ok === false || parsed.error)
+      if (parsed.ok === false || parsed.error) {
+        // A failed start answers with its stage and error in `result`.
+        const failed = parsed.result?.lastError;
         throw new OrcaError(
-          parsed.error?.code ?? "action_failed",
-          parsed.error?.message ?? "Orca refused the command",
+          parsed.error?.code ?? parsed.result?.failedStage ?? "action_failed",
+          parsed.error?.message ?? failed ?? "Orca refused the command",
         );
+      }
       return parsed.result as T;
     } finally {
       signal?.removeEventListener("abort", kill);
@@ -174,6 +199,15 @@ export class Orca {
       app?: { running?: boolean };
       runtime?: { state?: string; reachable?: boolean };
     }>(["status"], { signal });
+  }
+
+  /** The remote Orca servers this computer's Orca has saved. */
+  async environments(signal?: AbortSignal): Promise<readonly Environment[]> {
+    const result = await this.on("").call<{ environments?: Environment[] }>(
+      ["environment", "list"],
+      { signal },
+    );
+    return (result.environments ?? []).filter((item) => item?.id && item?.name);
   }
 
   async repos(signal?: AbortSignal): Promise<readonly Repo[]> {

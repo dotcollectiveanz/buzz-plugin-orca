@@ -29,6 +29,10 @@ orchestration workers. Read [README.md](README.md) first.
 - **The manifest asks only for that process and `files`.** `files` (`host.readFile`,
   `host.resolveDirectory`) is only for reading what workers attach. A `manifest.host` change needs the
   owner's approval on update in Buzz; keep it minimal, and update `scripts/check.mjs` with it.
+- **A remote agent's commands all go to its server.** `Config.host` names a saved remote Orca
+  server; `Orca.on(host)` adds `--environment <host>` to every command but `open`. A record keeps
+  its `host`, and every later call for it (check, send, reply, stop, activate) uses that one, as its
+  handles belong to that server. The host stays on the device, never synced.
 - **Orca is reached only through its CLI** (`src/orca.ts`), always with `--json`, and never with an Orca
   terminal's environment (`ENV`): the plugin names its own mailbox terminal with `--from` and
   `--terminal`.
@@ -90,7 +94,8 @@ orchestration workers. Read [README.md](README.md) first.
   run through the manifest's locator from a PATH with no Orca on it, as Buzz runs it (`ORCA_AGENT`
   picks the agent, default `claude`). Its reply attaches a picture the test puts in the checkout and
   removes after; a second worker is sent a picture saved in the temp folder, as Buzz saves media, and
-  must name its colour. It closes its mailbox terminals; release the workers' terminals if Orca
+  must name its colour. With `ORCA_HOST=<saved server>` (and a repo and agent on that server), a third
+  runs a worker on that remote server and checks its messages come back. It closes its mailbox terminals; release the workers' terminals if Orca
   hasn't yet. Nothing reaches Buzz.
 - Before a release, also try the change in Buzz itself: install from `plugin/`, create an Orca agent,
   mention it, and check its reply and its Activity tab.

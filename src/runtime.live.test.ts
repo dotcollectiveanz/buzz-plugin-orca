@@ -5,6 +5,8 @@
 // sent a picture saved where Buzz's agent media goes (the system temp folder)
 // and must say what it shows. Nothing reaches Buzz.
 //   ORCA_LIVE=1 ORCA_REPO=<name or path> npx vitest run src/runtime.live.test.ts
+// ORCA_HOST names a saved remote Orca server (`orca environment list`) for the
+// remote test, which is skipped without it.
 // ORCA_AGENT picks the agent (default claude), ORCA_MODEL and ORCA_EFFORT its
 // model and thinking level. Orca is run as Buzz runs it:
 // the manifest's declared `orca` process (the `sh` locator) with the
@@ -183,6 +185,33 @@ describe.runIf(live)("live Orca", () => {
       expect(posted).toHaveLength(1);
       expect(posted[0]!.text.toLowerCase()).toContain("red");
       expect(runtime.records()[0]?.status).toBe("done");
+    },
+    10 * 60_000,
+  );
+
+  it.runIf(!!process.env.ORCA_HOST)(
+    "runs a remote agent's worker on its Orca server and posts its messages",
+    async () => {
+      const { kit, posted } = fakeKit(THREAD);
+      const storage = memoryStorage();
+      const host = process.env.ORCA_HOST ?? "";
+      const orca = new Orca(spawn);
+      const runtime = new OrcaRuntime(kit, orca, storage, Date.now, files);
+      const { delivery, working } = mention(
+        "Live test of the Buzz to Orca plugin. Do not edit, create or delete any file, and run no commands except Orca's and `hostname`. First post a message to the conversation saying exactly: ping. Then report done with the summary: pong, then the output of `hostname` on its own line.",
+        { ...CONFIG, host },
+      );
+      try {
+        await runtime.run(delivery);
+        await Promise.all(working);
+      } finally {
+        runtime.dispose();
+      }
+      await closeMailboxes(orca.on(host), storage);
+      console.log(posted);
+      expect(posted.map((post) => post.text.trim().toLowerCase())[0]).toBe("ping");
+      expect(posted.at(-1)?.text.toLowerCase()).toContain("pong");
+      expect(runtime.records()[0]).toMatchObject({ host, status: "done" });
     },
     10 * 60_000,
   );
