@@ -610,6 +610,71 @@ describe("background work and prompts", () => {
   });
 });
 
+describe("remote servers and who answers", () => {
+  beforeEach(() => {
+    relay.events = [];
+    relay.queries = [];
+  });
+
+  const REMOTE = { ...CONFIG, host: "GCP build-loop" };
+
+  it("tells a remote worker files can't go either way, and the conversation once", async () => {
+    const shot = attached("cart.png");
+    const { media, asked } = fakeMedia();
+    const { spawn, calls } = orcaWith([
+      { result: { messages: [{ id: "m", type: "worker_done", body: "Here.\nAttach: shots/home.png" }] } },
+    ]);
+    const { kit, posted, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage(), Date.now, fakeFiles({ "/code/shop-wt/shots/home.png": PNG }));
+    const { delivery, working } = mention(`match this\n${shot.markdown}`, REMOTE, { tags: [shot.tag] });
+    await runtime.run({ ...delivery, agent: { ...delivery.agent, media } });
+    await Promise.all(working);
+    expect(asked).toEqual([]);
+    const spec = calls.find((call) => call.args[1] === "worker-start")!.input;
+    expect(spec).toContain("`cart.png` (image/png, 2 KB), not available: files can't reach a worker on a remote Orca server yet");
+    expect(spec).toContain("You run on a remote Orca server, so files can't be attached");
+    expect(spec).not.toContain("Attach: <path>");
+    expect(posted[0]?.text).toContain("A file in this conversation can't reach the worker: it runs on the remote Orca server GCP build-loop");
+    expect(sent).toEqual([]);
+    expect(posted.at(-1)?.text).toBe("Here.\n\n_A file couldn't be attached:_\n- `shots/home.png`: files from a remote Orca server can't be attached yet");
+  });
+
+  it("asks the answerer to tag the agent, and names whom the question waits for", async () => {
+    const to = "b".repeat(64);
+    relay.events = [profile(to, "Paddy Pallin Project Agent")];
+    const { spawn } = orcaWith([{ result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } }]);
+    const { kit, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("ship it", { ...CONFIG, questionsTo: to });
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(sent[0]?.args.text).toContain("Reply here and tag \\@Orca Agent so the worker gets your answer.");
+    expect(runtime.records()[0]).toMatchObject({ status: "question", askedOf: "Paddy Pallin Project Agent" });
+    expect(runtime.knownName(to)).toBe("Paddy Pallin Project Agent");
+  });
+
+  it("doesn't name anyone when the question fell back to the owner", async () => {
+    const { spawn } = orcaWith([{ result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } }]);
+    const { kit } = fakeKit(THREAD, { refuse: "not a member" });
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("ship it", { ...CONFIG, questionsTo: "c".repeat(64) });
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(runtime.records()[0]?.askedOf).toBeUndefined();
+  });
+
+  it("says why it tags the owner on a Buzz that can't tag whoever questions go to", async () => {
+    const { spawn } = orcaWith([{ result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } }]);
+    const { kit, posted } = fakeKit(THREAD, { tools: false });
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("ship it", { ...CONFIG, questionsTo: "c".repeat(64) });
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(posted.at(-1)).toMatchObject({ notifyOwner: true });
+    expect(posted.at(-1)?.text).toContain("I couldn't tag who this agent's questions go to (this version of Buzz can't tag them)");
+  });
+});
+
 describe("attachments", () => {
   beforeEach(() => {
     relay.events = [];

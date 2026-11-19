@@ -63,6 +63,17 @@ orchestration workers. Read [README.md](README.md) first.
   resolved, is read: a worker's mail decides what is uploaded. Text sent this way has `@` escaped
   outside code, as `send` would resolve it as a mention. Anything refused, or a `send` that fails,
   falls back to `kit.reply` with a note naming each file and why.
+- **Questions go to `questionsTo`, everything else to the owner.** A worker's `question`, and a
+  `needs-input` prompt Orca confirms or can't check, are posted through `send` tagging the agent's
+  `questionsTo` (`say(…, "question")`). If they can't be tagged (not in the channel, no `kit.tools`),
+  the owner is tagged with `unreachedText` saying why. Stops, errors and failed hand-overs always tag
+  the owner. A question tells the answerer to tag the agent: only a mention reaches the worker.
+  Buzz gives plugins no member list, so the setting is a public key; the name a question reads for
+  it is kept (`NAMES_KEY`) for the Settings and Activity tabs.
+- **Remote workers get no files either way, and are told so.** Media people send isn't saved for a
+  worker on a remote server (`unsavedMedia`, `REMOTE_FILES`); the worker is told the names and the
+  conversation is told once. `Attach:` lines from a remote worker are refused (`REMOTE_ATTACH`)
+  without reading this computer's disk, and its brief says not to use them (`NO_ATTACH`).
 - **Files people send reach the worker as local paths.** The worker can't open Buzz's media links
   (they are fetched only as the agent), so before handing over the plugin saves the files of the
   request and of each message the worker hasn't seen with `agent.media` (`src/media.ts`), as Buzz's

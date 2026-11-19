@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.0 (19 Nov 2026)
+
+- **Answers reach the worker.** A worker's question now says to reply and tag the agent, since only
+  a reply that tags it reaches the worker. Before, an answer without the tag left the worker waiting.
+- **Whose answer it waits for.** The Activity tab says "Waiting for <name>'s answer" when the
+  question went to someone other than you. Settings names whom **Questions go to** tags, once a
+  question has read their profile.
+- **Clear about remote files.** For a worker on a remote Orca server, files people send are no
+  longer saved on this computer where it can't open them. The worker is told their names, and the
+  thread is told once. Files it attaches are refused with that reason instead of being looked for
+  on this computer, and its brief says so.
+- **Fallbacks always say why.** On a Buzz that can't tag whoever questions go to, the owner is
+  tagged with the reason, as for other fallbacks.
+
 ## 1.3.0 (19 Nov 2026)
 
 - **Background work reaches Buzz.** A worker that ends its turn to wait on background work (subagents,

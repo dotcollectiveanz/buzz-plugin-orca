@@ -81,6 +81,27 @@ export const pubkey = (value: string) => {
   return undefined;
 };
 
+const BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/** A pubkey `pubkey` accepts as lowercase hex, for relay filters: an npub's
+ * bech32 data read back into bytes. Undefined for anything else. */
+export const hexKey = (value: string) => {
+  const key = pubkey(value);
+  if (!key || !key.startsWith("npub1")) return key;
+  let bits = 0;
+  let acc = 0;
+  let hex = "";
+  for (const char of key.slice(5, -6)) {
+    acc = (acc << 5) | BECH32.indexOf(char);
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      hex += ((acc >> bits) & 0xff).toString(16).padStart(2, "0");
+    }
+  }
+  return hex.length === 64 ? hex : undefined;
+};
+
 /** Orca's selector for the configured repo: a selector as given, a path as
  * `path:`, anything else as `name:`. Empty when none is set. */
 export const repoSelector = (repo: string) => {

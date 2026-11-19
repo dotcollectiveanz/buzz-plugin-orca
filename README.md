@@ -23,8 +23,9 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
 - **Questions come to you, or whoever you choose.** When the worker needs a decision, it asks. The
   question is posted in the thread and tags you, or the agent or person its **Questions go to**
   setting names (an npub or hex public key), such as a project agent that answers for you. They
-  must be in the channel; if they can't be tagged, you are. The next message in the thread that
-  mentions the agent, from you or one you attested, is its answer.
+  must be in the channel; if they can't be tagged, you are, with why. The next message in the thread
+  that mentions the agent, from you or one you attested, is its answer: the question says to tag
+  the agent, and the Activity tab names whose answer it waits for.
 - **Background work keeps going.** A worker that ends its turn to wait on background work
   (subagents, a `/loop`, a long review) is still followed: its later messages and its report reach
   the thread without anyone mentioning the agent again. The first time it ends a turn without a
@@ -63,8 +64,9 @@ Nothing else to set up: no link, no PATH change, no key. If Orca is closed, the 
 
 For a remote server: pair it in Orca first, and make sure the chosen coding agent is installed
 there (a server may have only some of them, such as OpenCode). Files go both ways only on this
-computer: a worker on a server can't open files saved here, and files it attaches on the server
-are named in its message rather than posted.
+computer: a worker on a server is told the names of files people send, and the thread is told once
+that they can't reach it. Files it attaches on the server are named in its message, with why, rather
+than posted.
 
 ## Install
 

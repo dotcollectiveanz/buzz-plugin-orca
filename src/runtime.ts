@@ -24,16 +24,18 @@ import {
   workspaceDir,
 } from "./attachments";
 import { launchChoice } from "./choices";
-import { type Conversation, contextText, readConversation } from "./context";
-import { attachedText, saveMedia } from "./media";
+import { type Conversation, contextText, names, readConversation } from "./context";
+import { attachedText, saveMedia, unsavedMedia } from "./media";
 import { type Message, type Orca, OrcaError, type Repo } from "./orca";
-import { type Config, config, repoSelector } from "./settings";
+import { type Config, config, hexKey, repoSelector } from "./settings";
 import {
   followUpText,
   lastOutput,
   NUDGE,
   placementArgs,
   questionText,
+  REMOTE_ATTACH,
+  REMOTE_FILES,
   reportText,
   SOFT_STOPS,
   stoppedText,
@@ -45,6 +47,9 @@ import {
 
 export const RECORDS_KEY = "buzz-plugin-orca.conversations.v1";
 export const MAILBOXES_KEY = "buzz-plugin-orca.mailboxes.v1";
+/** Display names of the pubkeys agents' questions go to, by hex pubkey, as
+ * last read: for the Settings and Activity tabs, which can't read Buzz. */
+export const NAMES_KEY = "buzz-plugin-orca.names.v1";
 /** Records kept, newest first. */
 const RECORDS_LIMIT = 200;
 /** How long one `check --wait` blocks before it is asked again. */
@@ -96,6 +101,9 @@ export type ConversationRecord = Readonly<{
   heardAt?: number;
   /** This turn the worker ended its turn without a reply at least once. */
   softStopped?: boolean;
+  /** Whose answer the open question waits for, when it tagged someone
+   * other than the owner: their name. */
+  askedOf?: string;
   /** While `working`: the worker ended its turn to wait on background work,
    * or waits at a prompt in its terminal. */
   waiting?: "background" | "prompt";
@@ -293,7 +301,7 @@ export class OrcaRuntime {
       // What was said since the worker last heard from the conversation, as
       // Buzz's own harnesses show a session the messages it hasn't seen.
       const said = await readConversation(delivery.agent, conversation, event, existing?.seen ?? 0);
-      const { request, context } = await this.shown(delivery, said);
+      const { request, context } = await this.shown(id, delivery, said, existing ? existing.host : settings.host);
       if (existing?.status === "question" && existing.question) {
         delivery.step?.("orca", "answer");
         await this.on(existing.host).reply(
@@ -305,7 +313,7 @@ export class OrcaRuntime {
           },
           this.lifetime.signal,
         );
-        this.update(id, { status: "working", question: undefined, error: undefined, seen: said.latest, turn: (existing.turn ?? 0) + 1, ...FRESH });
+        this.update(id, { status: "working", question: undefined, askedOf: undefined, error: undefined, seen: said.latest, turn: (existing.turn ?? 0) + 1, ...FRESH });
       } else if (existing) {
         delivery.step?.("orca", "follow-up");
         try {
@@ -329,7 +337,7 @@ export class OrcaRuntime {
           );
           // A new worker is shown the whole conversation.
           const all = await readConversation(delivery.agent, conversation, event, 0);
-          const shown = await this.shown(delivery, all);
+          const shown = await this.shown(id, delivery, all, settings.host, true);
           await this.start(id, delivery, settings, conversation, event, shown.request, all.from, shown.context, all.latest, all.request);
         }
       } else {
@@ -346,11 +354,19 @@ export class OrcaRuntime {
   }
 
   /** What the worker is shown of `said`: the request and the conversation,
-   * with the files they attach saved where the worker can open them. */
-  private async shown(delivery: Delivery<unknown>, said: Conversation) {
+   * with the files they attach saved where the worker can open them. A
+   * worker on a remote server can't open them: it is told their names, and
+   * the conversation is told once (not again when `quiet`). */
+  private async shown(id: string, delivery: Delivery<unknown>, said: Conversation, host: string | undefined, quiet = false) {
     const groups = [said.requestFiles, ...[...said.messages].reverse().map((item) => item.files)];
-    if (groups.some((group) => group.length)) delivery.step?.("orca", "files");
-    const files = await saveMedia(delivery.agent, groups);
+    const count = groups.reduce((sum, group) => sum + group.length, 0);
+    if (count) delivery.step?.("orca", "files");
+    if (host?.trim() && count && !quiet)
+      await this.say(
+        id,
+        `${count === 1 ? "A file" : `${count} files`} in this conversation can't reach the worker: it runs on the remote Orca server ${host.trim()}, and ${REMOTE_FILES}. It is told ${count === 1 ? "its name" : "their names"} only.`,
+      );
+    const files = host?.trim() ? unsavedMedia(groups, REMOTE_FILES) : await saveMedia(delivery.agent, groups);
     return {
       request: [said.request, attachedText(said.requestFiles, files)].filter(Boolean).join("\n\n"),
       context: contextText(said.messages, files),
@@ -405,6 +421,7 @@ export class OrcaRuntime {
           agentName: delivery.agent.name,
           instructions: settings.instructions,
           context,
+          remote: !!orca.environment,
         }),
         title,
         agent: settings.agent,
@@ -559,10 +576,12 @@ export class OrcaRuntime {
       return;
     }
     if (message.type === "question") {
-      this.update(id, { status: "question", question: message.id, waiting: undefined });
-      const text = questionText(body || (message.subject ?? ""));
-      if (drained) await this.say(id, `${text}\n\n_Your new message is being sent to it as the answer._`, false, paths);
-      else await this.say(id, text, "question", paths);
+      this.update(id, { status: "question", question: message.id, askedOf: undefined, waiting: undefined });
+      const asked = body || (message.subject ?? "");
+      const text = questionText(asked, this.agentName(id));
+      if (drained)
+        await this.say(id, `**The Orca worker asked:**\n\n${asked.trim()}\n\n_Your new message is being sent to it as the answer._`, false, paths);
+      else if (await this.say(id, text, "question", paths)) this.update(id, { askedOf: await this.questionsToName(id) });
       return;
     }
     if (message.type === "escalation") {
@@ -655,6 +674,25 @@ export class OrcaRuntime {
     return this.live.get(id)?.agent.name ?? "this agent";
   }
 
+  /** The display name of whom the agent's questions go to, read as the
+   * agent and kept for the tabs; "them" when it can't be read. */
+  private async questionsToName(id: string) {
+    const live = this.live.get(id);
+    const hex = live?.questionsTo && hexKey(live.questionsTo);
+    if (!live || !hex) return "them";
+    const found = (await names(live.agent, [hex]).catch(() => new Map<string, string>())).get(hex);
+    if (!found) return this.knownName(hex) ?? "them";
+    writeJson(this.storage, NAMES_KEY, { ...readJson<Record<string, string>>(this.storage, NAMES_KEY, {}), [hex]: found });
+    this.notify();
+    return found;
+  }
+
+  /** The last name read for a pubkey (hex or npub), if any. */
+  knownName(key: string) {
+    const hex = hexKey(key);
+    return hex ? readJson<Record<string, string>>(this.storage, NAMES_KEY, {})[hex] : undefined;
+  }
+
   /** The owner's Stop: stops the worker and the wait. */
   private async stop(id: string) {
     const record = this.record(id);
@@ -677,24 +715,27 @@ export class OrcaRuntime {
 
   /** Posts `text` as the agent, with the files at `paths` attached. A
    * question for someone other than the owner goes through `send`, which can
-   * tag them; if it can't, the owner is tagged instead. */
+   * tag them; if it can't, the owner is tagged instead, and told why.
+   * Resolves true when it tagged whoever questions go to. */
   private async say(id: string, text: string, notify: Notify = false, paths: readonly string[] = []) {
     const live = this.live.get(id);
-    if (!live) return;
-    const to = notify === "question" && live.questionsTo && this.kit.tools ? live.questionsTo : undefined;
-    let note = "";
+    if (!live) return false;
+    const wanted = notify === "question" ? live.questionsTo : undefined;
+    const to = wanted && this.kit.tools ? wanted : undefined;
+    let note = wanted && !to ? unreachedText("this version of Buzz can't tag them") : "";
     let attached: Attachment[] = [];
     if (paths.length) {
       const record = this.record(id);
-      const read =
-        this.files && this.kit.tools && record
+      const read = record?.host
+        ? { attached: [], refused: paths.map((path) => ({ path, reason: REMOTE_ATTACH })) }
+        : this.files && this.kit.tools && record
           ? await readAttachments(this.files, workspaceDir(record.workspace, record.repo), paths)
           : { attached: [], refused: paths.map((path) => ({ path, reason: "this version of Buzz can't attach files" })) };
-      note = refusedText(read.refused);
+      note = [refusedText(read.refused), note].filter(Boolean).join("\n\n");
       attached = [...read.attached];
       if (attached.length || to) {
         const failed = await this.send(live, [text, note].filter(Boolean).join("\n\n"), attached, to ?? (notify ? live.agent.owner : undefined));
-        if (!failed) return;
+        if (!failed) return !!to;
         note = [
           refusedText([...read.refused, ...attached.map(({ path }) => ({ path, reason: failed }))]),
           to && unreachedText(failed),
@@ -702,14 +743,15 @@ export class OrcaRuntime {
       }
     } else if (to && text) {
       const failed = await this.send(live, text, [], to);
-      if (!failed) return;
+      if (!failed) return true;
       note = unreachedText(failed);
     }
     const posted = [text, note].filter(Boolean).join("\n\n");
-    if (!posted) return;
+    if (!posted) return false;
     await this.kit
       .reply(live.agent, live.conversation, posted, notify ? { notifyOwner: true } : undefined)
       .catch(() => undefined);
+    return false;
   }
 
   /** Posts a message with files through Buzz's own `send` tool, as Buzz's

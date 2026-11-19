@@ -42,7 +42,7 @@ const withTimeout = <T>(work: Promise<T>, fallback: T) =>
   ]);
 
 /** Display names for `pubkeys` from their profiles, read as the agent. */
-async function names(
+export async function names(
   agent: AgentHandle,
   pubkeys: readonly string[],
 ): Promise<Map<string, string>> {
