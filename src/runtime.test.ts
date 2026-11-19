@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 import { beforeEach } from "vitest";
 import { type Answer, attached, chat, fakeFiles, fakeKit, fakeMedia, fakeOrca, memoryStorage, mention, PNG, profile, relay, TEXT, THREAD } from "./fake";
 import { Orca } from "./orca";
-import { MAILBOXES_KEY, OrcaRuntime } from "./runtime";
+import { MAILBOXES_KEY, OrcaRuntime, QUIET_MS } from "./runtime";
 
 const REPO = { id: "repo-1", path: "/code/shop", displayName: "shop" };
 const CONFIG = { repo: "shop", agent: "claude" };
 
-/** Orca with one repo, a mailbox, and mail given by `mail` per check. */
-function orcaWith(mail: Answer[], extra: (args: string[]) => Answer | undefined = () => undefined) {
+/** Orca with one repo, a mailbox, and mail given by `mail` per waiting
+ * check; a check that doesn't wait takes `queued`, else finds none. */
+function orcaWith(
+  mail: Answer[],
+  extra: (args: string[]) => Answer | undefined = () => undefined,
+  queued: Answer[] = [],
+) {
   return fakeOrca((args) => {
     const found = extra(args);
     if (found) return found;
@@ -28,6 +33,7 @@ function orcaWith(mail: Answer[], extra: (args: string[]) => Answer | undefined 
           workspace: "repo-1::/code/shop-wt",
         },
       };
+    if (b === "check" && !args.includes("--wait")) return queued.shift() ?? { result: { messages: [] } };
     if (b === "check") return mail.shift() ?? { wait: true };
     if (b === "send" || b === "reply" || b === "worker-stop") return { result: {} };
     return { error: { code: "unknown", message: args.join(" ") } };
@@ -233,7 +239,7 @@ describe("OrcaRuntime", () => {
 
   it("still tags the owner when a worker stops, whoever questions go to", async () => {
     const { spawn } = orcaWith([
-      { result: { messages: [{ id: "e1", type: "escalation", body: "Stuck.", payload: { stopReason: "finished" } }] } },
+      { result: { messages: [{ id: "e1", type: "escalation", body: "Stuck.", payload: { stopReason: "errored" } }] } },
     ]);
     const { kit, posted, sent } = fakeKit(THREAD);
     const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
@@ -364,6 +370,308 @@ describe("OrcaRuntime", () => {
     expect(calls.some((call) => call.args[1] === "worker-stop" && flag(call.args, "--dispatch") === "ctx_1")).toBe(true);
     expect(posted.at(-1)?.text).toBe("Stopped the Orca worker.");
     expect(runtime.records()[0]?.status).toBe("stopped");
+  });
+});
+
+describe("background work and prompts", () => {
+  beforeEach(() => {
+    relay.events = [];
+    relay.queries = [];
+  });
+
+  const mail = (...messages: object[]): Answer => ({ result: { messages } });
+  const stop = (reason: string, body = "") => ({ id: `x-${reason}`, type: "escalation", body, payload: { stopReason: reason } });
+  const FINISHED_BODY = [
+    "Worker term_w ended its turn without sending worker_done for task task_1.",
+    "The Dispatch is still open. Answer it with your Orca CLI's `orchestration send --to dispatch:ctx_1 --subject \"<topic>\" --body \"<guidance>\"`, retry it, or stop the worker.",
+    "If it is idle on purpose, leave it: its later idle turns are not reported until you write to it.",
+    "Last output:",
+    "Waiting on the release review.",
+    "Full output: orchestration worker-read --dispatch ctx_1",
+  ].join("\n");
+
+  async function turn(answers: Answer[], show: Answer = { result: {} }, config: object = CONFIG) {
+    const { spawn, calls } = orcaWith(answers, (args) => (args[1] === "worker-show" ? show : undefined));
+    const { kit, posted, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("review and merge", config);
+    await runtime.run(delivery);
+    await Promise.all(working);
+    return { calls, posted, sent, runtime };
+  }
+
+  it("keeps following a worker that ends its turn, nudges it once, and posts its later report", async () => {
+    const { calls, posted, runtime } = await turn([
+      mail(stop("finished", FINISHED_BODY)),
+      mail({ id: "s", type: "status", body: "Waiting on the release review." }),
+      mail(stop("finished", FINISHED_BODY)),
+      mail({ id: "d", type: "worker_done", body: "Review clean, merged #405." }),
+    ]);
+    const sends = calls.filter((call) => call.args[1] === "send");
+    expect(sends).toHaveLength(1);
+    expect(flag(sends[0]!.args, "--to")).toBe("dispatch:ctx_1");
+    expect(flag(sends[0]!.args, "--body")).toContain("send a `status` saying what you are waiting on");
+    expect(posted.map((post) => post.text)).toEqual(["Waiting on the release review.", "Review clean, merged #405."]);
+    expect(posted.some((post) => post.notifyOwner)).toBe(false);
+    expect(runtime.records()[0]?.status).toBe("done");
+  });
+
+  it("nudges once even after an early status, then stays quiet while the worker says what it waits on", async () => {
+    const { calls, posted } = await turn([
+      mail({ id: "s1", type: "status", body: "On it." }, stop("finished", FINISHED_BODY)),
+      mail({ id: "s2", type: "status", body: "Running 11 subagents." }, stop("finished", FINISHED_BODY)),
+      mail({ id: "d", type: "worker_done", body: "All 11 done." }),
+    ]);
+    expect(calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+    expect(posted.map((post) => post.text)).toEqual(["On it.", "Running 11 subagents.", "All 11 done."]);
+  });
+
+  it("posts every message of a batch, and a report from an older dispatch ends nothing", async () => {
+    const { spawn } = orcaWith(
+      [
+        mail({ id: "d1", type: "worker_done", body: "First done.", payload: { dispatchId: "ctx_1" } }, { id: "s0", type: "status", body: "Also, one note." }),
+        mail({ id: "d1b", type: "worker_done", body: "Late report for the first.", payload: { dispatchId: "ctx_1" } }),
+        mail({ id: "d2", type: "worker_done", body: "Second done.", payload: { dispatchId: "ctx_2" } }),
+      ],
+      (args) => (args[1] === "send" ? { result: { dispatchId: "ctx_2", delivery: "started_fresh" } } : undefined),
+    );
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("first", CONFIG, { id: "a".repeat(64), at: 1_000 });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    const second = mention("second", CONFIG, { id: "b".repeat(64), at: 2_000 });
+    await runtime.run(second.delivery);
+    await Promise.all(second.working);
+    expect(posted.map((post) => post.text)).toEqual(["First done.", "Also, one note.", "Late report for the first.", "Second done."]);
+    expect(runtime.records()[0]).toMatchObject({ status: "done", dispatch: "ctx_2", older: ["ctx_1"] });
+  });
+
+  it("keeps the day's cut-off after the worker posts a status", async () => {
+    let clock = 0;
+    let checks = 0;
+    const { spawn } = orcaWith(
+      [mail(stop("finished")), mail({ id: "s", type: "status", body: "Still waiting on CI." }), mail()],
+      (args) => {
+        if (args[1] === "check" && ++checks === 3) clock += QUIET_MS;
+        return undefined;
+      },
+    );
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage(), () => clock);
+    const { delivery, working } = mention("watch CI", CONFIG);
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(posted.at(-1)?.text).toContain("said nothing for 24 hours");
+    expect(runtime.records()[0]?.status).toBe("stopped");
+  });
+
+  it("posts the last output, untagged, when a nudged worker ends its turn silently again", async () => {
+    const { calls, posted, runtime } = await turn([
+      mail(stop("finished", FINISHED_BODY)),
+      mail(stop("finished", FINISHED_BODY)),
+      mail({ id: "d", type: "worker_done", body: "Done." }),
+    ]);
+    expect(calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+    expect(posted.map((post) => post.text)).toEqual(["Waiting on the release review.", "Done."]);
+    expect(posted.some((post) => /orchestration|Orca CLI|worker-read/.test(post.text))).toBe(false);
+    expect(runtime.records()[0]?.status).toBe("done");
+  });
+
+  it("stays quiet on a needs-input stop when Orca finds no prompt", async () => {
+    const { calls, posted, sent } = await turn([
+      mail(stop("needs-input", "Worker term_w is stopped at a prompt that needs a person.")),
+      mail({ id: "d", type: "worker_done", body: "Shipped." }),
+    ], { result: { observation: { status: "live", agentWait: null } } });
+    const show = calls.find((call) => call.args[1] === "worker-show")!.args;
+    expect(flag(show, "--dispatch")).toBe("ctx_1");
+    expect(show).toContain("--full");
+    expect(sent).toHaveLength(0);
+    expect(posted.map((post) => post.text)).toEqual(["Shipped."]);
+  });
+
+  it("marks a worker waiting on background work while it's followed", async () => {
+    const { spawn } = orcaWith([mail(stop("needs-input"))], (args) =>
+      args[1] === "worker-show" ? { result: { observation: { agentWait: null } } } : undefined,
+    );
+    const runtime = new OrcaRuntime(fakeKit(THREAD).kit, new Orca(spawn), memoryStorage());
+    const { delivery } = mention("loop over the backlog", CONFIG);
+    await runtime.run(delivery);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(runtime.following(delivery.agent.key, THREAD.key)).toBe(true);
+    expect(runtime.records()[0]).toMatchObject({ status: "working", waiting: "background" });
+    runtime.dispose();
+  });
+
+  it("tags whoever questions go to, once, when the worker really waits at a prompt", async () => {
+    const to = "b".repeat(64);
+    const body = "Worker term_w is stopped at a prompt that needs a person.\nLast output:\nAllow edits to .env? (y/n)\nFull output: orchestration worker-read --dispatch ctx_1";
+    const { sent, posted, runtime } = await turn(
+      [
+        mail(stop("needs-input", body)),
+        mail(stop("needs-input", body)),
+        mail({ id: "d", type: "worker_done", body: "Done after approval." }),
+      ],
+      { result: { observation: { agentWait: { reason: "permission-request", source: "hook" } } } },
+      { ...CONFIG, questionsTo: to },
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.args).toMatchObject({ mentions: [to] });
+    expect(sent[0]!.args.text).toContain("waiting at a prompt in its terminal");
+    expect(sent[0]!.args.text).toContain("> Allow edits to .env? (y/n)");
+    expect(sent[0]!.args.text).not.toContain("worker-read");
+    expect(posted.map((post) => post.text)).toEqual(["Done after approval."]);
+    expect(runtime.records()[0]?.status).toBe("done");
+  });
+
+  it("says a prompt is unconfirmed when Orca couldn't look", async () => {
+    const { posted } = await turn(
+      [mail(stop("needs-input")), mail({ id: "d", type: "worker_done", body: "ok" })],
+      { result: { observation: { status: "live" } } },
+    );
+    expect(posted[0]).toMatchObject({ notifyOwner: true });
+    expect(posted[0]?.text).toContain("may be waiting at a prompt");
+    expect(posted.at(-1)?.text).toBe("ok");
+  });
+
+  it("names the stop in plain words, without Orca's CLI instructions", async () => {
+    const { posted } = await turn([mail(stop("errored", FINISHED_BODY.replace("ended its turn", "ended its turn on an error")))]);
+    const text = posted.at(-1)?.text ?? "";
+    expect(text).toContain("stopped without reporting**: it hit an error.");
+    expect(text).toContain("> Waiting on the release review.");
+    expect(text).toContain("tag @Orca Agent");
+    expect(text).not.toMatch(/orchestration|Orca CLI|Dispatch is still open/);
+  });
+
+  it("posts a question left from an earlier turn untagged, and answers it with the new message", async () => {
+    const { spawn, calls } = orcaWith(
+      [mail({ id: "d1", type: "worker_done", body: "First done." }), mail({ id: "d2", type: "worker_done", body: "Second done." })],
+      undefined,
+      [mail({ id: "q9", type: "question", body: "Also: staging or prod?" })],
+    );
+    const { kit, posted, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("first", { ...CONFIG, questionsTo: "b".repeat(64) }, { id: "a".repeat(64), at: 1_000 });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    const second = mention("staging", CONFIG, { id: "b".repeat(64), at: 2_000 });
+    await runtime.run(second.delivery);
+    await Promise.all(second.working);
+    expect(sent).toHaveLength(0);
+    expect(posted[1]).toMatchObject({ notifyOwner: false });
+    expect(posted[1]?.text).toContain("Your new message is being sent to it as the answer.");
+    expect(flag(calls.find((call) => call.args[1] === "reply")!.args, "--id")).toBe("q9");
+  });
+
+  it("posts mail left from an earlier turn before sending a follow-up", async () => {
+    const { spawn, calls } = orcaWith(
+      [mail({ id: "m1", type: "escalation", payload: { stopReason: "exited" } }), mail({ id: "m3", type: "worker_done", body: "Second done." })],
+      undefined,
+      [mail({ id: "m2", type: "worker_done", body: "Late report from the first turn." }), mail(stop("finished"))],
+    );
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("first", CONFIG, { id: "a".repeat(64), at: 1_000 });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    const second = mention("second", CONFIG, { id: "b".repeat(64), at: 2_000 });
+    await runtime.run(second.delivery);
+    await Promise.all(second.working);
+    const order = calls.map((call) => `${call.args[1]}${call.args.includes("--wait") ? ":wait" : ""}`);
+    expect(order.indexOf("check")).toBeLessThan(order.indexOf("send"));
+    expect(posted.map((post) => post.text).slice(1)).toEqual(["Late report from the first turn.", "Second done."]);
+  });
+
+  it("stops following a worker that stays silent for a day after ending its turn", async () => {
+    let clock = 0;
+    let checks = 0;
+    const { spawn } = orcaWith(
+      [mail({ id: "s", type: "status", body: "Waiting on CI." }, stop("finished")), mail()],
+      (args) => {
+        if (args[1] === "check" && ++checks === 2) clock += QUIET_MS;
+        return undefined;
+      },
+    );
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage(), () => clock);
+    const { delivery, working } = mention("watch CI", CONFIG);
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(posted.at(-1)?.text).toContain("said nothing for 24 hours");
+    expect(posted.at(-1)?.notifyOwner).toBe(false);
+    expect(runtime.records()[0]?.status).toBe("stopped");
+  });
+
+  it("tells the worker never to end a turn silently or use question forms", async () => {
+    const { calls } = await turn([mail({ id: "d", type: "worker_done", body: "ok" })]);
+    const spec = calls.find((call) => call.args[1] === "worker-start")!.input;
+    expect(spec).toContain("Never end a turn silently");
+    expect(spec).toContain("AskUserQuestion");
+  });
+});
+
+describe("remote servers and who answers", () => {
+  beforeEach(() => {
+    relay.events = [];
+    relay.queries = [];
+  });
+
+  const REMOTE = { ...CONFIG, host: "GCP build-loop" };
+
+  it("tells a remote worker files can't go either way, and the conversation once", async () => {
+    const shot = attached("cart.png");
+    const { media, asked } = fakeMedia();
+    const { spawn, calls } = orcaWith([
+      { result: { messages: [{ id: "m", type: "worker_done", body: "Here.\nAttach: shots/home.png" }] } },
+    ]);
+    const { kit, posted, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage(), Date.now, fakeFiles({ "/code/shop-wt/shots/home.png": PNG }));
+    const { delivery, working } = mention(`match this\n${shot.markdown}`, REMOTE, { tags: [shot.tag] });
+    await runtime.run({ ...delivery, agent: { ...delivery.agent, media } });
+    await Promise.all(working);
+    expect(asked).toEqual([]);
+    const spec = calls.find((call) => call.args[1] === "worker-start")!.input;
+    expect(spec).toContain("`cart.png` (image/png, 2 KB), not available: files can't reach a worker on a remote Orca server yet");
+    expect(spec).toContain("You run on a remote Orca server, so files can't be attached");
+    expect(spec).not.toContain("Attach: <path>");
+    expect(posted[0]?.text).toContain("A file in this conversation can't reach the worker: it runs on the remote Orca server GCP build-loop");
+    expect(sent).toEqual([]);
+    expect(posted.at(-1)?.text).toBe("Here.\n\n_A file couldn't be attached:_\n- `shots/home.png`: files from a remote Orca server can't be attached yet");
+  });
+
+  it("asks the answerer to tag the agent, and names whom the question waits for", async () => {
+    const to = "b".repeat(64);
+    relay.events = [profile(to, "Paddy Pallin Project Agent")];
+    const { spawn } = orcaWith([{ result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } }]);
+    const { kit, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("ship it", { ...CONFIG, questionsTo: to });
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(sent[0]?.args.text).toContain("Reply here and tag \\@Orca Agent so the worker gets your answer.");
+    expect(runtime.records()[0]).toMatchObject({ status: "question", askedOf: "Paddy Pallin Project Agent" });
+    expect(runtime.knownName(to)).toBe("Paddy Pallin Project Agent");
+  });
+
+  it("doesn't name anyone when the question fell back to the owner", async () => {
+    const { spawn } = orcaWith([{ result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } }]);
+    const { kit } = fakeKit(THREAD, { refuse: "not a member" });
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("ship it", { ...CONFIG, questionsTo: "c".repeat(64) });
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(runtime.records()[0]?.askedOf).toBeUndefined();
+  });
+
+  it("says why it tags the owner on a Buzz that can't tag whoever questions go to", async () => {
+    const { spawn } = orcaWith([{ result: { messages: [{ id: "q1", type: "question", body: "Which branch?" }] } }]);
+    const { kit, posted } = fakeKit(THREAD, { tools: false });
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const { delivery, working } = mention("ship it", { ...CONFIG, questionsTo: "c".repeat(64) });
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(posted.at(-1)).toMatchObject({ notifyOwner: true });
+    expect(posted.at(-1)?.text).toContain("I couldn't tag who this agent's questions go to (this version of Buzz can't tag them)");
   });
 });
 

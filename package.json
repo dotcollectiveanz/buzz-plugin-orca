@@ -1,6 +1,6 @@
 {
   "name": "buzz-plugin-orca",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Buzz plugin: agents whose turns run as Orca workers, on this computer or a paired Orca server.",
   "type": "module",

@@ -34,6 +34,12 @@ const png = icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d
 const [w, h] = [icon.readUInt32BE(16), icon.readUInt32BE(20)];
 check("icon.png is a PNG within Buzz's limits", png && icon.length <= 1 << 20 && w <= 4096 && h <= 4096 && w * h <= 1 << 20, `${icon.length} bytes, ${w}x${h}`);
 
+// The lockfile carries the version too; a stale one means `npm ci` installs an
+// older package's lock and the release looks unfinished.
+const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
+check("package-lock.json has package.json's version", lock.version === pkg.version && lock.packages?.[""]?.version === pkg.version, `${lock.version} vs ${pkg.version}`);
+
 const before = readFileSync(join(root, "plugin/plugin.js"), "utf8");
 check("plugin.js has no runtime imports", !/(^|[;\n])\s*import\s*[{*\w"']/.test(before.replace(/\bimport\.meta\b/g, "")));
 execFileSync("node", ["build.mjs"], { cwd: root, stdio: "ignore" });

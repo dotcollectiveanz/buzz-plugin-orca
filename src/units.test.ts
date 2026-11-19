@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fakeOrca } from "./fake";
 import { envelope, MISSING, Orca, OrcaError } from "./orca";
-import { config, DEFAULT_CONFIG, repoSelector, summary, syncedSettingsSchema, withSyncedSettings } from "./settings";
+import { config, DEFAULT_CONFIG, hexKey, repoSelector, summary, syncedSettingsSchema, withSyncedSettings } from "./settings";
 import { messageText, placementArgs, taskTitle, workerSpec, workspaceName } from "./spec";
 
 describe("settings", () => {
@@ -37,6 +37,13 @@ describe("settings", () => {
     expect(config({ questionsTo: "npub1" + "q".repeat(58) }).questionsTo).toBe("npub1" + "q".repeat(58));
     expect(config({ questionsTo: "@Project Agent" }).questionsTo).toBe("");
     expect(withSyncedSettings(config({ questionsTo: "a".repeat(64) }), { agent: "codex" }).questionsTo).toBe("a".repeat(64));
+  });
+  it("reads an npub back as the hex key relay filters take", () => {
+    expect(hexKey("npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m")).toBe(
+      "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2",
+    );
+    expect(hexKey("A".repeat(64))).toBe("a".repeat(64));
+    expect(hexKey("@Project Agent")).toBeUndefined();
   });
 });
 

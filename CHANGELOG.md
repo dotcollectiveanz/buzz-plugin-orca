@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.3.0 (19 Nov 2026)
+
+- **Background work reaches Buzz.** A worker that ends its turn to wait on background work (subagents,
+  a `/loop`, a long review) is no longer reported as stopped. The plugin keeps following it, so its
+  later messages and its report reach the thread without anyone mentioning the agent again. The first
+  time it ends a turn without a reply, it is asked once to say what it is waiting on or send its
+  reply. Its Activity entry reads "Waiting on background work".
+- **No false "waiting at a prompt" alerts.** When Orca says a worker waits at a prompt, the plugin
+  checks with Orca first. A real prompt is quoted once and tags whoever questions go to; one Orca
+  rules out posts nothing.
+- **Clearer stops.** A stop says why in plain words, with the worker's last output, and no longer
+  shows Orca CLI commands nobody in Buzz can run.
+- **Nothing left behind.** Mail a worker sent after its turn ended is posted before the next message
+  is sent to it, and a late report from an earlier request no longer ends the newer one. A question
+  left over that way is posted untagged, since the new message is sent as its answer.
+- **Answers reach the worker.** A worker's question now says to reply and tag the agent, since only
+  a reply that tags it reaches the worker. Before, an answer without the tag left the worker waiting.
+- **Whose answer it waits for.** The Activity tab says "Waiting for <name>'s answer" when the
+  question went to someone other than you. Settings names whom **Questions go to** tags, once a
+  question has read their profile.
+- **Clear about remote files.** For a worker on a remote Orca server, files people send are no
+  longer saved on this computer where it can't open them. The worker is told their names, and the
+  thread is told once. Files it attaches are refused with that reason instead of being looked for
+  on this computer, and its brief says so.
+- **Fallbacks always say why.** On a Buzz that can't tag whoever questions go to, the owner is
+  tagged with the reason, as for other fallbacks.
+- Workers are told never to end a turn silently, and not to use question forms or plan-approval
+  prompts, which can't be answered from Buzz.
+
 ## 1.2.0 (19 Nov 2026)
 
 - **Questions go to.** A new optional setting names the Buzz agent or person (by npub or hex

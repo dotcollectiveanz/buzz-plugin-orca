@@ -98,6 +98,11 @@ export async function saveMedia(
   return files;
 }
 
+/** The files of `groups`, none saved, each with why. */
+export function unsavedMedia(groups: readonly (readonly MediaRef[])[], why: string) {
+  return new Map<string, MediaFile>(groups.flat().map((ref) => [ref.url, { ...ref, error: why }]));
+}
+
 const sizeText = (bytes?: number) =>
   bytes === undefined
     ? ""
@@ -118,8 +123,11 @@ export function mediaLines(refs: readonly MediaRef[], files: ReadonlyMap<string,
 /** The files attached to the request, for the worker's Task. */
 export function attachedText(refs: readonly MediaRef[], files: ReadonlyMap<string, MediaFile>) {
   if (!refs.length) return "";
+  const saved = refs.some((ref) => files.get(ref.url)?.path);
   return [
-    "Files attached to this message (open them from where they are saved; they are only on this computer):",
+    saved
+      ? "Files attached to this message (open them from where they are saved; they are only on this computer):"
+      : "Files attached to this message:",
     ...mediaLines(refs, files).map((line) => `- ${line}`),
   ].join("\n");
 }

@@ -221,16 +221,19 @@ function RuntimeRows({ value, refs, disabled, onChange }: PartProps) {
   );
 }
 
-/** Who a worker's questions tag, when not the owner. */
-function QuestionsTo({ value, disabled, onChange }: PartProps) {
+/** Who a worker's questions tag, when not the owner. Buzz gives plugins no
+ * list of a community's members to choose from, so it takes a public key,
+ * and names whom it tags once a question has read their profile. */
+function QuestionsTo({ value, disabled, onChange, name }: PartProps & { name?: string }) {
   const invalid = !!value.questionsTo.trim() && !pubkey(value.questionsTo);
+  const tags = !invalid && name ? ` Tags ${name}.` : "";
   return (
     <Field
       id="orca-questions-to"
       label="Questions go to"
       optional
       error={invalid ? "Enter an npub or a 64-character hex public key." : undefined}
-      description="The Buzz agent or person to tag when a worker asks a question, such as a project agent that answers for you. Their npub or hex public key. Empty tags you. Stops and errors still tag you."
+      description={`The Buzz agent or person to tag when a worker asks a question or waits at a prompt, such as a project agent that answers for you. Their npub or hex public key; they must be in the channel. Empty tags you. Stops and errors still tag you.${tags}`}
     >
       <TextInput
         id="orca-questions-to"
@@ -250,6 +253,17 @@ const STATUS: Readonly<Record<Status, string>> = {
   failed: "Failed",
   stopped: "Stopped",
 };
+
+/** A record's status, saying what a working worker waits on, and whose
+ * answer a question waits for. */
+const statusText = (record: ConversationRecord) =>
+  record.status === "question" && record.askedOf
+    ? `Waiting for ${record.askedOf === "them" ? "an answer" : `${record.askedOf}'s answer`}`
+    : record.status === "working" && record.waiting === "background"
+    ? "Waiting on background work"
+    : record.status === "working" && record.waiting === "prompt"
+      ? "Waiting at a prompt in Orca"
+      : STATUS[record.status];
 
 const when = (at: number) => {
   const minutes = Math.round((Date.now() - at) / 60_000);
@@ -364,7 +378,7 @@ export function createTabs(
         {settingsSection !== "identity" && (
           <>
             <RuntimeRows {...part} />
-            <QuestionsTo {...part} />
+            <QuestionsTo {...part} name={runtime.knownName(draft.questionsTo)} />
           </>
         )}
         <Button type="submit" variant="prominent" disabled={!changed || saving || invalid} wide>
@@ -392,7 +406,7 @@ export function createTabs(
               {record.title}
             </span>
             <span className="block text-body-sm text-subtle">
-              {[STATUS[record.status], record.where, record.host && `on ${record.host}`, when(record.updatedAt), record.error]
+              {[statusText(record), record.where, record.host && `on ${record.host}`, when(record.updatedAt), record.error]
                 .filter(Boolean)
                 .join(" · ")}
             </span>
