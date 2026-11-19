@@ -30,11 +30,15 @@ import { type Message, type Orca, OrcaError, type Repo } from "./orca";
 import { type Config, config, repoSelector } from "./settings";
 import {
   followUpText,
+  lastOutput,
+  NUDGE,
   placementArgs,
   questionText,
   reportText,
+  SOFT_STOPS,
   stoppedText,
   taskTitle,
+  waitingText,
   workerSpec,
   workspaceName,
 } from "./spec";
@@ -50,6 +54,12 @@ export const WAIT_MS = 10 * 60_000;
 export const WAKE = ["status", "worker_done", "question", "escalation"] as const;
 /** Failed checks in a row before the conversation is told. */
 const CHECK_RETRIES = 3;
+/** How long a worker that ended its turn may stay silent before the plugin
+ * stops following it. Background work (a `/loop`, subagents) can run for
+ * hours; its later mail still reaches Buzz with the next mention. */
+export const QUIET_MS = 24 * 60 * 60_000;
+/** Batches of mail left from an earlier turn taken before a follow-up. */
+const DRAIN_LIMIT = 10;
 
 export type Status = "working" | "question" | "done" | "failed" | "stopped";
 
@@ -76,6 +86,15 @@ export type ConversationRecord = Readonly<{
   seen?: number;
   /** The worker's open question, answered by the next mention. */
   question?: string;
+  /** While `working`: the worker ended its turn to wait on background work,
+   * or waits at a prompt in its terminal. */
+  waiting?: "background" | "prompt";
+  /** This turn the worker has posted a `status`, been sent the nudge, or
+   * the conversation been told it waits at a prompt. Reset when the worker
+   * is sent the next message. */
+  spoke?: boolean;
+  nudged?: boolean;
+  alerted?: boolean;
   error?: string;
   startedAt: number;
   updatedAt: number;
@@ -94,6 +113,8 @@ type Notify = false | "owner" | "question";
 type Waiter = { done: Promise<void>; abort: AbortController };
 
 const recordId = (agent: string, key: string) => `${agent}|${key}`;
+/** A turn's state, cleared when the worker is sent a new message. */
+const FRESH = { waiting: undefined, spoke: undefined, nudged: undefined, alerted: undefined } as const;
 const unreachedText = (why: string) =>
   `I couldn't tag who this agent's questions go to (${why}), so I'm asking you.`;
 const errorText = (error: unknown) =>
@@ -244,12 +265,20 @@ export class OrcaRuntime {
     event: RelayEvent,
     resumed: boolean,
   ) {
-    const existing = this.record(id);
+    let existing = this.record(id);
     const open = existing && (existing.status === "working" || existing.status === "question");
     try {
       if (existing && resumed && open) {
         // The app closed while this turn was working: keep waiting for it.
         return;
+      }
+      if (existing && !this.waiters.has(id)) {
+        // Mail the worker sent after the last turn ended (a report once its
+        // background work finished) is posted first, so it can't end this
+        // turn, and a question in it is what this message answers.
+        delivery.step?.("orca", "mail");
+        await this.drain(id, existing);
+        existing = this.record(id);
       }
       // What was said since the worker last heard from the conversation, as
       // Buzz's own harnesses show a session the messages it hasn't seen.
@@ -266,7 +295,7 @@ export class OrcaRuntime {
           },
           this.lifetime.signal,
         );
-        this.update(id, { status: "working", question: undefined, error: undefined, seen: said.latest });
+        this.update(id, { status: "working", question: undefined, error: undefined, seen: said.latest, ...FRESH });
       } else if (existing) {
         delivery.step?.("orca", "follow-up");
         try {
@@ -280,7 +309,7 @@ export class OrcaRuntime {
             },
             this.lifetime.signal,
           );
-          this.update(id, { status: "working", error: undefined, seen: said.latest });
+          this.update(id, { status: "working", error: undefined, seen: said.latest, ...FRESH });
         } catch (error) {
           if (error instanceof OrcaError && error.code === "missing") throw error;
           await this.say(
@@ -455,6 +484,15 @@ export class OrcaRuntime {
         }
         for (const message of messages)
           if (await this.deliver(id, message)) return;
+        const after = this.record(id);
+        if (!messages.length && after?.waiting && this.now() - after.updatedAt >= QUIET_MS) {
+          this.update(id, { status: "stopped", waiting: undefined, error: "quiet for 24 h" });
+          await this.say(
+            id,
+            `The Orca worker has said nothing for 24 hours since it ended its turn, so I've stopped following it. Reply here and tag @${this.agentName(id)} to send it more work.`,
+          );
+          return;
+        }
       }
     })().finally(() => {
       if (this.waiters.get(id)?.done === done) this.waiters.delete(id);
@@ -473,25 +511,105 @@ export class OrcaRuntime {
     if (message.type === "status") {
       // A message the worker posts while it works; the turn goes on.
       const text = body || (message.subject ?? "").trim();
+      this.update(id, { spoke: true, waiting: undefined });
       if (text || paths.length) await this.say(id, text, false, paths);
       return false;
     }
     if (message.type === "worker_done") {
-      this.update(id, { status: "done", ...(dispatch && { dispatch }) });
+      this.update(id, { status: "done", waiting: undefined, ...(dispatch && { dispatch }) });
       await this.say(id, reportText(body || (message.subject ?? ""), message.payload?.outcome), false, paths);
       return true;
     }
     if (message.type === "question") {
-      this.update(id, { status: "question", question: message.id, ...(dispatch && { dispatch }) });
+      this.update(id, { status: "question", question: message.id, waiting: undefined, ...(dispatch && { dispatch }) });
       await this.say(id, questionText(body || (message.subject ?? "")), "question", paths);
       return true;
     }
     if (message.type === "escalation") {
-      this.update(id, { status: "stopped", ...(dispatch && { dispatch }) });
-      await this.say(id, stoppedText(message.payload?.stopReason, message.body), "owner");
+      const reason = message.payload?.stopReason;
+      if (reason && SOFT_STOPS.has(reason)) {
+        if (dispatch) this.update(id, { dispatch });
+        return this.soft(id, reason, message.body);
+      }
+      this.update(id, { status: "stopped", waiting: undefined, ...(dispatch && { dispatch }) });
+      await this.say(id, stoppedText(reason, message.body, this.agentName(id)), "owner");
       return true;
     }
     return false;
+  }
+
+  /** A stop that may only mean the worker is idle on purpose: it ended its
+   * turn to wait on background work, or Orca took that wait for a prompt.
+   * The turn goes on, so the worker's later mail still reaches Buzz. Says
+   * nothing unless the worker is silent or really waits on a person. */
+  private async soft(id: string, reason: string, body: string | undefined) {
+    const record = this.record(id);
+    if (!record) return true;
+    if (reason === "needs-input") {
+      let wait: string | false | undefined;
+      try {
+        wait = await this.on(record.host).waitingOnHuman(record.dispatch, this.lifetime.signal);
+      } catch {
+        wait = undefined;
+      }
+      if (wait === false) {
+        // Orca looked and found no prompt: background work, misread.
+        this.update(id, { waiting: "background" });
+        return false;
+      }
+      this.update(id, { waiting: "prompt", alerted: true });
+      if (!record.alerted) await this.say(id, waitingText(wait, body, this.agentName(id)), "question");
+      return false;
+    }
+    // `finished`: the worker ended its turn without `worker_done`. Orca
+    // reports its later idle turns only once the plugin writes to it.
+    if (record.spoke) {
+      this.update(id, { waiting: "background" });
+      return false;
+    }
+    if (!record.nudged) {
+      try {
+        await this.on(record.host).send(
+          {
+            from: record.mailbox,
+            run: record.run,
+            dispatch: record.dispatch,
+            subject: "Reply or say what you're waiting on",
+            body: NUDGE,
+          },
+          this.lifetime.signal,
+        );
+        this.update(id, { waiting: "background", nudged: true });
+        return false;
+      } catch {
+        // Unreachable: say what it last showed instead.
+      }
+    }
+    this.update(id, { waiting: "background", spoke: true, nudged: true });
+    const last = lastOutput(body);
+    if (last) await this.say(id, last);
+    return false;
+  }
+
+  /** Posts mail left in the Run from an earlier turn, without waiting. A
+   * stop in it is old news, so it is dropped. */
+  private async drain(id: string, record: ConversationRecord) {
+    const orca = this.on(record.host);
+    for (let batch = 0; batch < DRAIN_LIMIT; batch++) {
+      let messages: readonly Message[];
+      try {
+        messages = await orca.check({ terminal: record.mailbox, run: record.run }, this.lifetime.signal);
+      } catch {
+        return;
+      }
+      if (!messages.length) return;
+      for (const message of messages)
+        if (message.type !== "escalation") await this.deliver(id, message);
+    }
+  }
+
+  private agentName(id: string) {
+    return this.live.get(id)?.agent.name ?? "this agent";
   }
 
   /** The owner's Stop: stops the worker and the wait. */

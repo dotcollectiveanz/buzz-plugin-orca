@@ -251,6 +251,14 @@ const STATUS: Readonly<Record<Status, string>> = {
   stopped: "Stopped",
 };
 
+/** A record's status, saying what a working worker waits on. */
+const statusText = (record: ConversationRecord) =>
+  record.status === "working" && record.waiting === "background"
+    ? "Waiting on background work"
+    : record.status === "working" && record.waiting === "prompt"
+      ? "Waiting at a prompt in Orca"
+      : STATUS[record.status];
+
 const when = (at: number) => {
   const minutes = Math.round((Date.now() - at) / 60_000);
   if (minutes < 1) return "Just now";
@@ -392,7 +400,7 @@ export function createTabs(
               {record.title}
             </span>
             <span className="block text-body-sm text-subtle">
-              {[STATUS[record.status], record.where, record.host && `on ${record.host}`, when(record.updatedAt), record.error]
+              {[statusText(record), record.where, record.host && `on ${record.host}`, when(record.updatedAt), record.error]
                 .filter(Boolean)
                 .join(" · ")}
             </span>

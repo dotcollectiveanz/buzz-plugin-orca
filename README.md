@@ -25,8 +25,16 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
   setting names (an npub or hex public key), such as a project agent that answers for you. They
   must be in the channel; if they can't be tagged, you are. The next message in the thread that
   mentions the agent, from you or one you attested, is its answer.
-- **Stops are reported.** When a worker stops without reporting, the thread says why and tags you.
-  Buzz's Stop on a working turn stops the worker.
+- **Background work keeps going.** A worker that ends its turn to wait on background work
+  (subagents, a `/loop`, a long review) is still followed: its later messages and its report reach
+  the thread without anyone mentioning the agent again. If it ended its turn without saying why, it
+  is asked once to say what it is waiting on. Its Activity entry reads "Waiting on background work".
+- **Prompts are checked before anyone is tagged.** When Orca says a worker waits at a prompt, the
+  plugin asks Orca whether it really does. If so, the thread quotes the prompt and tags whoever
+  questions go to (a terminal prompt is answered in Orca, not from Buzz); if not, nothing is posted.
+- **Stops are reported.** When a worker stops on an error or its process ends, the thread says why
+  in plain words, with its last output, and tags you. Buzz's Stop on a working turn stops the
+  worker.
 - **Runs here or on a server.** Each agent's **Runs on** setting picks this computer's Orca or a
   remote Orca server it is paired with (`orca environment list`), such as a build server. The
   worker, its workspace and its mailbox are then on that server, and the repository list is the
@@ -88,12 +96,14 @@ The plugin is an Orca orchestration coordinator. For each conversation it:
    them) and the worker is told where;
 4. waits for the Run's mail (`orca orchestration check --terminal <mailbox> --wait`) and posts each
    `status` message (the worker's messages while it works) to the conversation, then the
-   `worker_done` reply, a `question` or an `escalation`, which end the turn. Files the worker names
+   `worker_done` reply, a `question`, or an `escalation` for an error or an ended process, which end
+   the turn. An `escalation` that may only mean the worker is idle on purpose (`finished`, or a
+   `needs-input` that `orca orchestration worker-show` doesn't confirm) doesn't end it. Files the worker names
    with `Attach: <path>` lines are posted with the message through Buzz's own `send` tool, which
    uploads them as the agent.
 
 A later message goes to the worker with `orchestration send`, or answers its question with
-`orchestration reply`. Each conversation's Run, worker and state are kept in Buzz's local storage.
+`orchestration reply`. Mail the worker sent after the last turn ended is posted first. Each conversation's Run, worker and state are kept in Buzz's local storage.
 
 If Buzz closes while a worker is busy, the worker keeps going in Orca. Its report waits in the
 mailbox: Buzz's **Resume** on the stopped turn, or your next message in the thread, picks it up.

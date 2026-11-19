@@ -40,8 +40,16 @@ orchestration workers. Read [README.md](README.md) first.
   steers a worker through its terminal: it uses `send` and `reply`.
 - **Chat relays both ways, like Buzz's own harness.** Forward: each turn carries the conversation's
   messages the worker hasn't seen (`seen` on the record), with names. Back: the worker's `status`
-  messages are posted as they arrive and the turn goes on; `worker_done`, `question` and `escalation`
-  end it. The plugin posts nothing of its own on a normal turn.
+  messages are posted as they arrive and the turn goes on; `worker_done`, `question` and a hard
+  `escalation` (an error, an ended process) end it. The plugin posts nothing of its own on a normal
+  turn. Mail left from an earlier turn is posted before a follow-up is sent.
+- **Soft stops don't end a turn.** Orca's `finished` and `needs-input` stops often mean the worker is
+  idle on purpose, waiting on background work (`SOFT_STOPS` in `src/spec.ts`). The plugin keeps
+  following it. On `finished` it sends the worker one nudge per turn (`NUDGE`) unless it posted a
+  `status`, and posts the last output only if it stays silent after that. On `needs-input` it asks
+  `worker-show` first: a prompt Orca confirms, or can't check, is posted once, tagging `questionsTo`;
+  one Orca rules out posts nothing. Stop texts never carry Orca's CLI instructions (`lastOutput`).
+  A worker silent for `QUIET_MS` after a soft stop is no longer followed.
 - **Files go back through Buzz's own `send`.** A worker attaches files with `Attach: <path>` lines in a
   `status`, `worker_done` or `question` body (Orca's `--payload` can't be combined with `--outcome`).
   The plugin reads them (`src/attachments.ts`) and posts the message with `kit.tools()`'s `send`

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.0 (19 Nov 2026)
+
+- **Background work reaches Buzz.** A worker that ends its turn to wait on background work (subagents,
+  a `/loop`, a long review) is no longer reported as stopped. The plugin keeps following it, so its
+  later messages and its report reach the thread without anyone mentioning the agent again. If it
+  ended its turn without saying why, it is asked once to say what it is waiting on. Its Activity entry
+  reads "Waiting on background work".
+- **No false "waiting at a prompt" alerts.** When Orca says a worker waits at a prompt, the plugin
+  checks with Orca first. A real prompt is quoted once and tags whoever questions go to; one Orca
+  rules out posts nothing.
+- **Clearer stops.** A stop says why in plain words, with the worker's last output, and no longer
+  shows Orca CLI commands nobody in Buzz can run.
+- **Nothing left behind.** Mail a worker sent after its turn ended is posted before the next message
+  is sent to it.
+- Workers are told never to end a turn silently, and not to use question forms or plan-approval
+  prompts, which can't be answered from Buzz.
+
 ## 1.2.0 (19 Nov 2026)
 
 - **Questions go to.** A new optional setting names the Buzz agent or person (by npub or hex

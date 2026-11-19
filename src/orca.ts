@@ -334,33 +334,45 @@ export class Orca {
   }
 
   /** Takes the Run's next batch of mail, waiting up to `timeoutMs` for one
-   * that holds a message of `types`. Empty when the wait ran out. */
+   * that holds a message of `types`. Empty when the wait ran out. Without
+   * `timeoutMs` it doesn't wait: it takes the oldest batch already there. */
   async check(
     options: Readonly<{
       terminal: string;
       run: string;
-      types: readonly string[];
-      timeoutMs: number;
+      types?: readonly string[];
+      timeoutMs?: number;
     }>,
     signal?: AbortSignal,
   ): Promise<readonly Message[]> {
+    const wait =
+      options.timeoutMs === undefined
+        ? []
+        : [
+            "--wait",
+            ...(options.types?.length ? ["--types", options.types.join(",")] : []),
+            "--timeout-ms",
+            String(options.timeoutMs),
+          ];
     const result = await this.call<{ messages?: Message[] }>(
-      [
-        "orchestration",
-        "check",
-        "--terminal",
-        options.terminal,
-        "--run",
-        options.run,
-        "--wait",
-        "--types",
-        options.types.join(","),
-        "--timeout-ms",
-        String(options.timeoutMs),
-      ],
+      ["orchestration", "check", "--terminal", options.terminal, "--run", options.run, ...wait],
       { signal },
     );
     return result.messages ?? [];
+  }
+
+  /** Whether a worker is parked on a prompt only a person can answer, as
+   * Orca observed it: the prompt's reason (and how Orca knows), `false`
+   * when Orca looked and found none, or `undefined` when it couldn't look
+   * (an older host, an unreadable pane). */
+  async waitingOnHuman(dispatch: string, signal?: AbortSignal): Promise<string | false | undefined> {
+    const result = await this.call<{ waitingOnHuman?: string }>(
+      ["orchestration", "worker-show", "--dispatch", dispatch],
+      { signal },
+    );
+    const wait = result?.waitingOnHuman;
+    if (wait === undefined) return false;
+    return wait === "unknown" ? undefined : wait;
   }
 
   send(
