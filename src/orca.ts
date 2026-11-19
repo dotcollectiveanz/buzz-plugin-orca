@@ -334,36 +334,53 @@ export class Orca {
   }
 
   /** Takes the Run's next batch of mail, waiting up to `timeoutMs` for one
-   * that holds a message of `types`. Empty when the wait ran out. */
+   * that holds a message of `types`. Empty when the wait ran out. Without
+   * `timeoutMs` it doesn't wait: it takes the oldest batch already there. */
   async check(
     options: Readonly<{
       terminal: string;
       run: string;
-      types: readonly string[];
-      timeoutMs: number;
+      types?: readonly string[];
+      timeoutMs?: number;
     }>,
     signal?: AbortSignal,
   ): Promise<readonly Message[]> {
+    const wait =
+      options.timeoutMs === undefined
+        ? []
+        : [
+            "--wait",
+            ...(options.types?.length ? ["--types", options.types.join(",")] : []),
+            "--timeout-ms",
+            String(options.timeoutMs),
+          ];
     const result = await this.call<{ messages?: Message[] }>(
-      [
-        "orchestration",
-        "check",
-        "--terminal",
-        options.terminal,
-        "--run",
-        options.run,
-        "--wait",
-        "--types",
-        options.types.join(","),
-        "--timeout-ms",
-        String(options.timeoutMs),
-      ],
+      ["orchestration", "check", "--terminal", options.terminal, "--run", options.run, ...wait],
       { signal },
     );
     return result.messages ?? [];
   }
 
-  send(
+  /** Whether a worker is parked on a prompt only a person can answer, as
+   * Orca observed it: the prompt's reason (and how Orca knows), `false`
+   * when Orca looked and found none, or `undefined` when it couldn't look
+   * (an older host, an unreadable pane). */
+  async waitingOnHuman(dispatch: string, signal?: AbortSignal): Promise<string | false | undefined> {
+    // The full record, as the concise view leaves a clear result out, which
+    // an Orca without the field would look the same as.
+    const result = await this.call<{
+      observation?: { agentWait?: { reason?: string; source?: string } | null };
+    }>(["orchestration", "worker-show", "--dispatch", dispatch, "--full"], { signal });
+    const observation = result?.observation;
+    if (!observation || !("agentWait" in observation)) return undefined;
+    const wait = observation.agentWait;
+    if (!wait) return false;
+    return `${wait.reason ?? "interactive prompt"}${wait.source ? ` (via ${wait.source})` : ""}`;
+  }
+
+  /** Sends a dispatch a message. Resolves with the dispatch it went to: a
+   * worker that had finished gets a new one for the follow-up. */
+  async send(
     options: Readonly<{
       from: string;
       run: string;
@@ -372,8 +389,8 @@ export class Orca {
       body: string;
     }>,
     signal?: AbortSignal,
-  ) {
-    return this.call<unknown>(
+  ): Promise<{ dispatchId?: string }> {
+    const result = await this.call<{ dispatchId?: unknown } | undefined>(
       [
         "orchestration",
         "send",
@@ -390,6 +407,8 @@ export class Orca {
       ],
       { signal },
     );
+    const dispatchId = result?.dispatchId;
+    return typeof dispatchId === "string" && dispatchId ? { dispatchId } : {};
   }
 
   reply(

@@ -40,8 +40,21 @@ orchestration workers. Read [README.md](README.md) first.
   steers a worker through its terminal: it uses `send` and `reply`.
 - **Chat relays both ways, like Buzz's own harness.** Forward: each turn carries the conversation's
   messages the worker hasn't seen (`seen` on the record), with names. Back: the worker's `status`
-  messages are posted as they arrive and the turn goes on; `worker_done`, `question` and `escalation`
-  end it. The plugin posts nothing of its own on a normal turn.
+  messages are posted as they arrive and the turn goes on; `worker_done`, `question` and a hard
+  `escalation` (an error, an ended process) end it. The plugin posts nothing of its own on a normal
+  turn. Mail left from an earlier turn is posted before a follow-up is sent.
+- **Soft stops don't end a turn.** Orca's `finished` and `needs-input` stops often mean the worker is
+  idle on purpose, waiting on background work (`SOFT_STOPS` in `src/spec.ts`). The plugin keeps
+  following it. On the first `finished` of a turn it sends the worker one nudge (`NUDGE`); on a later
+  one it stays quiet if the worker posted a `status` since the last stop, and otherwise posts its
+  last output, untagged. On `needs-input` it asks `worker-show --full` first: a prompt Orca confirms,
+  or can't check, is posted once, tagging `questionsTo`; one Orca rules out posts nothing. Stop texts
+  never carry Orca's CLI instructions (`lastOutput`). A worker that sends no mail for `QUIET_MS`
+  after a soft stop is no longer followed.
+- **Mail belongs to a dispatch.** A follow-up to a finished worker gets a new dispatch, which `send`
+  returns; the record keeps it and the ones it replaced (`older`). Mail from an older dispatch is
+  posted but ends nothing. State learned while handling a stop is dropped if a newer turn (`turn`)
+  began meanwhile. Every message of a checked batch is posted.
 - **Files go back through Buzz's own `send`.** A worker attaches files with `Attach: <path>` lines in a
   `status`, `worker_done` or `question` body (Orca's `--payload` can't be combined with `--outcome`).
   The plugin reads them (`src/attachments.ts`) and posts the message with `kit.tools()`'s `send`
@@ -50,6 +63,17 @@ orchestration workers. Read [README.md](README.md) first.
   resolved, is read: a worker's mail decides what is uploaded. Text sent this way has `@` escaped
   outside code, as `send` would resolve it as a mention. Anything refused, or a `send` that fails,
   falls back to `kit.reply` with a note naming each file and why.
+- **Questions go to `questionsTo`, everything else to the owner.** A worker's `question`, and a
+  `needs-input` prompt Orca confirms or can't check, are posted through `send` tagging the agent's
+  `questionsTo` (`say(…, "question")`). If they can't be tagged (not in the channel, no `kit.tools`),
+  the owner is tagged with `unreachedText` saying why. Stops, errors and failed hand-overs always tag
+  the owner. A question tells the answerer to tag the agent: only a mention reaches the worker.
+  Buzz gives plugins no member list, so the setting is a public key; the name a question reads for
+  it is kept (`NAMES_KEY`) for the Settings and Activity tabs.
+- **Remote workers get no files either way, and are told so.** Media people send isn't saved for a
+  worker on a remote server (`unsavedMedia`, `REMOTE_FILES`); the worker is told the names and the
+  conversation is told once. `Attach:` lines from a remote worker are refused (`REMOTE_ATTACH`)
+  without reading this computer's disk, and its brief says not to use them (`NO_ATTACH`).
 - **Files people send reach the worker as local paths.** The worker can't open Buzz's media links
   (they are fetched only as the agent), so before handing over the plugin saves the files of the
   request and of each message the worker hasn't seen with `agent.media` (`src/media.ts`), as Buzz's
@@ -98,12 +122,17 @@ orchestration workers. Read [README.md](README.md) first.
   runs a worker on that remote server and checks its messages come back. It closes its mailbox terminals; release the workers' terminals if Orca
   hasn't yet. Nothing reaches Buzz.
 - Before a release, also try the change in Buzz itself: install from `plugin/`, create an Orca agent,
-  mention it, and check its reply and its Activity tab.
+  mention it, and check its reply and its Activity tab. Say what you tried in the PR's "Tried in
+  Buzz" section (`.github/pull_request_template.md`).
+- The Check workflow (`.github/workflows/check.yml`) runs `npm run check` on every pull request and
+  push to `main`. `main` is protected: changes land through a pull request with that check passing
+  and one approving review from someone other than the author.
 
 ## Releases
 
 1. After an Orca update, `npm run catalog` and commit `src/catalog.ts` if it changed.
-2. Update `version` in `package.json` and add a `## X.Y.Z (date)` section to `CHANGELOG.md`.
+2. Update `version` in `package.json` and `package-lock.json` (its top two `version` fields), and add
+   a `## X.Y.Z (date)` section to `CHANGELOG.md`.
 3. `npm run build && npm run check`.
 4. Commit, tag `vX.Y.Z` and push the tag. The Release workflow (`.github/workflows/release.yml`)
    checks the tag matches `package.json`, runs the check, and publishes the GitHub release with that
