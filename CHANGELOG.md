@@ -4,16 +4,17 @@
 
 - **Background work reaches Buzz.** A worker that ends its turn to wait on background work (subagents,
   a `/loop`, a long review) is no longer reported as stopped. The plugin keeps following it, so its
-  later messages and its report reach the thread without anyone mentioning the agent again. If it
-  ended its turn without saying why, it is asked once to say what it is waiting on. Its Activity entry
-  reads "Waiting on background work".
+  later messages and its report reach the thread without anyone mentioning the agent again. The first
+  time it ends a turn without a reply, it is asked once to say what it is waiting on or send its
+  reply. Its Activity entry reads "Waiting on background work".
 - **No false "waiting at a prompt" alerts.** When Orca says a worker waits at a prompt, the plugin
   checks with Orca first. A real prompt is quoted once and tags whoever questions go to; one Orca
   rules out posts nothing.
 - **Clearer stops.** A stop says why in plain words, with the worker's last output, and no longer
   shows Orca CLI commands nobody in Buzz can run.
 - **Nothing left behind.** Mail a worker sent after its turn ended is posted before the next message
-  is sent to it.
+  is sent to it, and a late report from an earlier request no longer ends the newer one. A question
+  left over that way is posted untagged, since the new message is sent as its answer.
 - Workers are told never to end a turn silently, and not to use question forms or plan-approval
   prompts, which can't be answered from Buzz.
 

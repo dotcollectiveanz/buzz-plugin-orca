@@ -27,8 +27,8 @@ the thread as the agent's reply. You can watch the worker, or talk to it, in Orc
   mentions the agent, from you or one you attested, is its answer.
 - **Background work keeps going.** A worker that ends its turn to wait on background work
   (subagents, a `/loop`, a long review) is still followed: its later messages and its report reach
-  the thread without anyone mentioning the agent again. If it ended its turn without saying why, it
-  is asked once to say what it is waiting on. Its Activity entry reads "Waiting on background work".
+  the thread without anyone mentioning the agent again. The first time it ends a turn without a
+  reply, it is asked to say what it is waiting on or send its reply. Its Activity entry reads "Waiting on background work".
 - **Prompts are checked before anyone is tagged.** When Orca says a worker waits at a prompt, the
   plugin asks Orca whether it really does. If so, the thread quotes the prompt and tags whoever
   questions go to (a terminal prompt is answered in Orca, not from Buzz); if not, nothing is posted.

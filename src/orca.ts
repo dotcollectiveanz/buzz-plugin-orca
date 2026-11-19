@@ -366,16 +366,21 @@ export class Orca {
    * when Orca looked and found none, or `undefined` when it couldn't look
    * (an older host, an unreadable pane). */
   async waitingOnHuman(dispatch: string, signal?: AbortSignal): Promise<string | false | undefined> {
-    const result = await this.call<{ waitingOnHuman?: string }>(
-      ["orchestration", "worker-show", "--dispatch", dispatch],
-      { signal },
-    );
-    const wait = result?.waitingOnHuman;
-    if (wait === undefined) return false;
-    return wait === "unknown" ? undefined : wait;
+    // The full record, as the concise view leaves a clear result out, which
+    // an Orca without the field would look the same as.
+    const result = await this.call<{
+      observation?: { agentWait?: { reason?: string; source?: string } | null };
+    }>(["orchestration", "worker-show", "--dispatch", dispatch, "--full"], { signal });
+    const observation = result?.observation;
+    if (!observation || !("agentWait" in observation)) return undefined;
+    const wait = observation.agentWait;
+    if (!wait) return false;
+    return `${wait.reason ?? "interactive prompt"}${wait.source ? ` (via ${wait.source})` : ""}`;
   }
 
-  send(
+  /** Sends a dispatch a message. Resolves with the dispatch it went to: a
+   * worker that had finished gets a new one for the follow-up. */
+  async send(
     options: Readonly<{
       from: string;
       run: string;
@@ -384,8 +389,8 @@ export class Orca {
       body: string;
     }>,
     signal?: AbortSignal,
-  ) {
-    return this.call<unknown>(
+  ): Promise<{ dispatchId?: string }> {
+    const result = await this.call<{ dispatchId?: unknown } | undefined>(
       [
         "orchestration",
         "send",
@@ -402,6 +407,8 @@ export class Orca {
       ],
       { signal },
     );
+    const dispatchId = result?.dispatchId;
+    return typeof dispatchId === "string" && dispatchId ? { dispatchId } : {};
   }
 
   reply(

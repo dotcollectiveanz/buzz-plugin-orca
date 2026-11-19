@@ -416,13 +416,54 @@ describe("background work and prompts", () => {
     expect(runtime.records()[0]?.status).toBe("done");
   });
 
-  it("doesn't nudge a worker that said what it waits on", async () => {
+  it("nudges once even after an early status, then stays quiet while the worker says what it waits on", async () => {
     const { calls, posted } = await turn([
-      mail({ id: "s", type: "status", body: "Running 11 subagents." }, stop("finished", FINISHED_BODY)),
+      mail({ id: "s1", type: "status", body: "On it." }, stop("finished", FINISHED_BODY)),
+      mail({ id: "s2", type: "status", body: "Running 11 subagents." }, stop("finished", FINISHED_BODY)),
       mail({ id: "d", type: "worker_done", body: "All 11 done." }),
     ]);
-    expect(calls.some((call) => call.args[1] === "send")).toBe(false);
-    expect(posted.map((post) => post.text)).toEqual(["Running 11 subagents.", "All 11 done."]);
+    expect(calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+    expect(posted.map((post) => post.text)).toEqual(["On it.", "Running 11 subagents.", "All 11 done."]);
+  });
+
+  it("posts every message of a batch, and a report from an older dispatch ends nothing", async () => {
+    const { spawn } = orcaWith(
+      [
+        mail({ id: "d1", type: "worker_done", body: "First done.", payload: { dispatchId: "ctx_1" } }, { id: "s0", type: "status", body: "Also, one note." }),
+        mail({ id: "d1b", type: "worker_done", body: "Late report for the first.", payload: { dispatchId: "ctx_1" } }),
+        mail({ id: "d2", type: "worker_done", body: "Second done.", payload: { dispatchId: "ctx_2" } }),
+      ],
+      (args) => (args[1] === "send" ? { result: { dispatchId: "ctx_2", delivery: "started_fresh" } } : undefined),
+    );
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("first", CONFIG, { id: "a".repeat(64), at: 1_000 });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    const second = mention("second", CONFIG, { id: "b".repeat(64), at: 2_000 });
+    await runtime.run(second.delivery);
+    await Promise.all(second.working);
+    expect(posted.map((post) => post.text)).toEqual(["First done.", "Also, one note.", "Late report for the first.", "Second done."]);
+    expect(runtime.records()[0]).toMatchObject({ status: "done", dispatch: "ctx_2", older: ["ctx_1"] });
+  });
+
+  it("keeps the day's cut-off after the worker posts a status", async () => {
+    let clock = 0;
+    let checks = 0;
+    const { spawn } = orcaWith(
+      [mail(stop("finished")), mail({ id: "s", type: "status", body: "Still waiting on CI." }), mail()],
+      (args) => {
+        if (args[1] === "check" && ++checks === 3) clock += QUIET_MS;
+        return undefined;
+      },
+    );
+    const { kit, posted } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage(), () => clock);
+    const { delivery, working } = mention("watch CI", CONFIG);
+    await runtime.run(delivery);
+    await Promise.all(working);
+    expect(posted.at(-1)?.text).toContain("said nothing for 24 hours");
+    expect(runtime.records()[0]?.status).toBe("stopped");
   });
 
   it("posts the last output, untagged, when a nudged worker ends its turn silently again", async () => {
@@ -441,15 +482,17 @@ describe("background work and prompts", () => {
     const { calls, posted, sent } = await turn([
       mail(stop("needs-input", "Worker term_w is stopped at a prompt that needs a person.")),
       mail({ id: "d", type: "worker_done", body: "Shipped." }),
-    ], { result: { dispatchId: "ctx_1", activity: "working" } });
-    expect(flag(calls.find((call) => call.args[1] === "worker-show")!.args, "--dispatch")).toBe("ctx_1");
+    ], { result: { observation: { status: "live", agentWait: null } } });
+    const show = calls.find((call) => call.args[1] === "worker-show")!.args;
+    expect(flag(show, "--dispatch")).toBe("ctx_1");
+    expect(show).toContain("--full");
     expect(sent).toHaveLength(0);
     expect(posted.map((post) => post.text)).toEqual(["Shipped."]);
   });
 
   it("marks a worker waiting on background work while it's followed", async () => {
     const { spawn } = orcaWith([mail(stop("needs-input"))], (args) =>
-      args[1] === "worker-show" ? { result: {} } : undefined,
+      args[1] === "worker-show" ? { result: { observation: { agentWait: null } } } : undefined,
     );
     const runtime = new OrcaRuntime(fakeKit(THREAD).kit, new Orca(spawn), memoryStorage());
     const { delivery } = mention("loop over the backlog", CONFIG);
@@ -469,7 +512,7 @@ describe("background work and prompts", () => {
         mail(stop("needs-input", body)),
         mail({ id: "d", type: "worker_done", body: "Done after approval." }),
       ],
-      { result: { waitingOnHuman: "permission-request (via hook)" } },
+      { result: { observation: { agentWait: { reason: "permission-request", source: "hook" } } } },
       { ...CONFIG, questionsTo: to },
     );
     expect(sent).toHaveLength(1);
@@ -484,7 +527,7 @@ describe("background work and prompts", () => {
   it("says a prompt is unconfirmed when Orca couldn't look", async () => {
     const { posted } = await turn(
       [mail(stop("needs-input")), mail({ id: "d", type: "worker_done", body: "ok" })],
-      { result: { waitingOnHuman: "unknown" } },
+      { result: { observation: { status: "live" } } },
     );
     expect(posted[0]).toMatchObject({ notifyOwner: true });
     expect(posted[0]?.text).toContain("may be waiting at a prompt");
@@ -498,6 +541,26 @@ describe("background work and prompts", () => {
     expect(text).toContain("> Waiting on the release review.");
     expect(text).toContain("tag @Orca Agent");
     expect(text).not.toMatch(/orchestration|Orca CLI|Dispatch is still open/);
+  });
+
+  it("posts a question left from an earlier turn untagged, and answers it with the new message", async () => {
+    const { spawn, calls } = orcaWith(
+      [mail({ id: "d1", type: "worker_done", body: "First done." }), mail({ id: "d2", type: "worker_done", body: "Second done." })],
+      undefined,
+      [mail({ id: "q9", type: "question", body: "Also: staging or prod?" })],
+    );
+    const { kit, posted, sent } = fakeKit(THREAD);
+    const runtime = new OrcaRuntime(kit, new Orca(spawn), memoryStorage());
+    const first = mention("first", { ...CONFIG, questionsTo: "b".repeat(64) }, { id: "a".repeat(64), at: 1_000 });
+    await runtime.run(first.delivery);
+    await Promise.all(first.working);
+    const second = mention("staging", CONFIG, { id: "b".repeat(64), at: 2_000 });
+    await runtime.run(second.delivery);
+    await Promise.all(second.working);
+    expect(sent).toHaveLength(0);
+    expect(posted[1]).toMatchObject({ notifyOwner: false });
+    expect(posted[1]?.text).toContain("Your new message is being sent to it as the answer.");
+    expect(flag(calls.find((call) => call.args[1] === "reply")!.args, "--id")).toBe("q9");
   });
 
   it("posts mail left from an earlier turn before sending a follow-up", async () => {
