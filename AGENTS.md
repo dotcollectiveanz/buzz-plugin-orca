@@ -98,12 +98,17 @@ orchestration workers. Read [README.md](README.md) first.
   runs a worker on that remote server and checks its messages come back. It closes its mailbox terminals; release the workers' terminals if Orca
   hasn't yet. Nothing reaches Buzz.
 - Before a release, also try the change in Buzz itself: install from `plugin/`, create an Orca agent,
-  mention it, and check its reply and its Activity tab.
+  mention it, and check its reply and its Activity tab. Say what you tried in the PR's "Tried in
+  Buzz" section (`.github/pull_request_template.md`).
+- The Check workflow (`.github/workflows/check.yml`) runs `npm run check` on every pull request and
+  push to `main`. `main` is protected: changes land through a pull request with that check passing
+  and one approving review from someone other than the author.
 
 ## Releases
 
 1. After an Orca update, `npm run catalog` and commit `src/catalog.ts` if it changed.
-2. Update `version` in `package.json` and add a `## X.Y.Z (date)` section to `CHANGELOG.md`.
+2. Update `version` in `package.json` and `package-lock.json` (its top two `version` fields), and add
+   a `## X.Y.Z (date)` section to `CHANGELOG.md`.
 3. `npm run build && npm run check`.
 4. Commit, tag `vX.Y.Z` and push the tag. The Release workflow (`.github/workflows/release.yml`)
    checks the tag matches `package.json`, runs the check, and publishes the GitHub release with that
